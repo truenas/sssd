@@ -1,0 +1,37 @@
+Tests: ldap-user-group-ldap-auth
+Depends: @, slapd, ldap-utils, openssl, expect, lsb-release
+Restrictions: isolation-container, needs-root, allow-stderr
+
+Tests: ldap-user-group-krb5-auth
+Depends: @, slapd, ldap-utils, openssl, expect, lsb-release, krb5-user, krb5-admin-server, krb5-kdc
+Restrictions: isolation-container, needs-root, allow-stderr
+
+Tests: sssd-softhism2-certificates-tests.sh
+Depends: bash,
+         gnutls-bin,
+         openssl,
+         passwd,
+         softhsm2,
+         sssd,
+         util-linux
+Restrictions: needs-root,
+              allow-stderr
+
+Test-Command: env
+  OFFLINE_MODE=1
+  bash debian/tests/sssd-smart-card-pam-auth-configs-tester.sh
+Features: test-name=sssd-smart-card-pam-auth-configs
+Depends: bash,
+         gnutls-bin,
+         libpam-sss,
+         openssl,
+         pamtester,
+         passwd,
+         softhsm2,
+         sssd,
+         util-linux
+Restrictions: breaks-testbed,
+              isolation-container,
+              needs-root,
+              allow-stderr
+

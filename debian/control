@@ -1,0 +1,129 @@
+Source: sssd
+Section: utils
+Priority: optional
+Maintainer: TrueNAS Services Team <services@ixsystems.com>
+Build-Depends: dpkg-dev (>= 1.21.0),
+ autopoint,
+ bc,
+ check <!nocheck>,
+ cifs-utils,
+ debhelper-compat (= 13),
+ dh-apparmor,
+ dh-python,
+ dh-sequence-installnss,
+ bind9-dnsutils,
+ docbook-xml,
+ docbook-xsl,
+ dpkg-dev (>= 1.16.1~),
+ faketime <!nocheck>,
+ gnutls-bin <!nocheck>,
+ krb5-config,
+ ldap-utils,
+ libaugeas-dev,
+ libc-ares-dev,
+ libcmocka-dev <!nocheck>,
+ libcollection-dev,
+ libcurl4-openssl-dev,
+ libdbus-1-dev,
+ libdhash-dev,
+ libfido2-dev,
+ libgdm-dev [!s390x !kfreebsd-any !hurd-any],
+ libglib2.0-dev,
+ libini-config-dev,
+ libjansson-dev,
+ libjose-dev,
+ libkeyutils-dev [linux-any],
+ libkrad-dev,
+ libkrb5-dev (>= 1.12),
+ libldap2-dev,
+ libldb-dev,
+ libltdl-dev,
+ libnfsidmap-dev,
+ libnl-3-dev [linux-any],
+ libnl-route-3-dev [linux-any],
+ libnss-wrapper <!nocheck>,
+ libp11-kit-dev,
+ libpam-wrapper <!nocheck>,
+ libpam0g-dev | libpam-dev,
+ libpcre2-dev,
+ libpopt-dev,
+ libsasl2-dev,
+ libselinux1-dev [linux-any],
+ libsemanage-dev [linux-any],
+ libssl-dev,
+ libsubid-dev,
+ libsystemd-dev [linux-any],
+ libtalloc-dev,
+ libtdb-dev,
+ libtevent-dev,
+ libuid-wrapper <!nocheck>,
+ libunistring-dev,
+ libxml2-utils,
+ lsb-release,
+ openssh-client <!nocheck>,
+ openssl <!nocheck>,
+ pkgconf,
+ python3-dev,
+ python3-setuptools,
+ softhsm2 <!nocheck>,
+ systemd-dev,
+ systemtap-sdt-dev,
+ uuid-dev,
+ xml-core,
+ xsltproc
+Standards-Version: 4.4.0
+Vcs-Git: https://salsa.debian.org/sssd-team/sssd.git
+Vcs-Browser: https://salsa.debian.org/sssd-team/sssd
+Homepage: https://github.com/SSSD/sssd
+
+Package: truenas-sssd
+Architecture: any
+Multi-Arch: foreign
+Depends:
+ python3,
+ python3-systemd,
+ libpam-pwquality (>= 1.2.2-1),
+ libpam-runtime (>= 1.0.1-6),
+ ${misc:Depends}
+ ${shlibs:Depends}
+Provides:
+ sssd,
+ sssd-common,
+ sssd-ad,
+ sssd-ad-common,
+ sssd-dbus,
+ sssd-idp,
+ sssd-ipa,
+ sssd-kcm,
+ sssd-krb5,
+ sssd-krb5-common,
+ sssd-ldap,
+ sssd-passkey,
+ sssd-proxy,
+ sssd-tools,
+ sssd-dbus,
+ libnss-sss,
+ libpam-sss,
+ libipa-hbac0t64,
+ libipa-hbac-dev,
+ libsss-certmap0,
+ libsss-idmap0,
+ libsss-nss-idmap0,
+ libsss-sudo,
+ python3-libipa-hbac,
+ python3-libsss-nss-idmap,
+Description: System Security Services Daemon
+ Provides a set of daemons to manage access to remote directories and
+ authentication mechanisms. It provides an NSS and PAM interface toward
+ the system and a pluggable backend system to connect to multiple different
+ account sources. It is also the basis to provide client auditing and policy
+ services for projects like FreeIPA.
+
+Package: truenas-sssd-dev
+Section: libdevel
+Architecture: any
+Depends: truenas-sssd
+Description: TrueNAS SSSD -- development files
+ Header files and pkgconfig to develop programs using libraries provided by
+ SSSD on TrueNAS.
+ .

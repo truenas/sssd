@@ -1,0 +1,161 @@
+etc/pam.d/sssd-shadowutils
+${env:systemdsystemunitdir}/sssd.service
+${env:systemdsystemunitdir}/sssd-ssh.service
+${env:systemdsystemunitdir}/sssd-ssh.socket
+${env:systemdsystemunitdir}/sssd-autofs.service
+${env:systemdsystemunitdir}/sssd-autofs.socket
+${env:systemdsystemunitdir}/sssd-pam.service
+${env:systemdsystemunitdir}/sssd-pam.socket
+${env:systemdsystemunitdir}/sssd-pam-priv.socket
+${env:systemdsystemunitdir}/sssd-nss.service
+${env:systemdsystemunitdir}/sssd-nss.socket
+usr/bin/sss_ssh_authorizedkeys
+usr/bin/sss_ssh_knownhostsproxy
+usr/lib/*/cifs-utils/cifs_idmap_sss.so
+usr/lib/*/krb5/plugins/authdata/sssd_pac_plugin.so
+usr/lib/*/krb5/plugins/libkrb5/sssd_krb5_locator_plugin.so
+usr/lib/*/samba/ldb/memberof.so
+usr/lib/*/libnfsidmap/sss.so
+usr/lib/*/libsubid_sss.so
+usr/lib/*/samba/idmap/sss.so
+usr/lib/*/sssd/conf/sssd.conf
+usr/lib/*/sssd/libifp_iface.so
+usr/lib/*/sssd/libifp_iface_sync.so
+usr/lib/*/sssd/libsss_cert.so
+usr/lib/*/sssd/libsss_child.so
+usr/lib/*/sssd/libsss_crypt.so
+usr/lib/*/sssd/libsss_debug.so
+usr/lib/*/sssd/libsss_iface.so
+usr/lib/*/sssd/libsss_iface_sync.so
+usr/lib/*/sssd/libsss_krb5_common.so
+usr/lib/*/sssd/libsss_ldap_common.so
+usr/lib/*/sssd/libsss_sbus.so
+usr/lib/*/sssd/libsss_sbus_sync.so
+usr/lib/*/sssd/libsss_semanage.so
+usr/lib/*/sssd/libsss_simple.so
+usr/lib/*/sssd/libsss_util.so
+usr/lib/*/sssd/modules/libsss_autofs.so
+usr/lib/*/sssd/modules/sssd_krb5_localauth_plugin.so
+usr/libexec/sssd/p11_child
+usr/libexec/sssd/sss_signal
+usr/libexec/sssd/sssd_autofs
+usr/libexec/sssd/sssd_be
+usr/libexec/sssd/sssd_check_socket_activated_responders
+usr/libexec/sssd/sssd_nss
+usr/libexec/sssd/sssd_pam
+usr/libexec/sssd/sssd_ssh
+usr/sbin/sssd
+usr/share/locale/*/LC_MESSAGES/*
+usr/share/man/man1/sss_ssh_authorizedkeys.1*
+usr/share/man/man1/sss_ssh_knownhostsproxy.1*
+usr/share/man/man5/sss_rpcidmapd.5*
+usr/share/man/man5/sssd-session-recording.5*
+usr/share/man/man5/sssd-simple.5*
+usr/share/man/man5/sssd-systemtap.5*
+usr/share/man/man5/sssd.conf.5*
+usr/share/man/man8/idmap_sss.8*
+usr/share/man/man8/sssd.8*
+usr/share/man/man8/sssd_krb5_localauth_plugin.8
+usr/share/man/man8/sssd_krb5_locator_plugin.8*
+usr/share/polkit-1/rules.d/sssd-pcsc.rules
+usr/share/sssd/cfg_rules.ini
+usr/share/sssd/sssd.api.conf
+usr/share/sssd/sssd.api.d
+usr/share/sssd/systemtap
+usr/share/systemtap
+# sssd-proxy.install
+usr/lib/*/sssd/libsss_proxy.so
+usr/libexec/sssd/proxy_child
+# sssd-tools.install
+usr/sbin/sss_cache
+usr/sbin/sss_debuglevel
+usr/sbin/sss_obfuscate
+usr/sbin/sss_override
+usr/sbin/sss_seed
+usr/sbin/sssctl
+usr/lib/python3/dist-packages/sssd/
+usr/libexec/sssd/sss_analyze
+usr/share/man/man8/sss_cache.8*
+usr/share/man/man8/sss_debuglevel.8*
+usr/share/man/man8/sss_obfuscate.8*
+usr/share/man/man8/sss_override.8*
+usr/share/man/man8/sss_seed.8*
+usr/share/man/man8/sssctl.8*
+# sssd-passkey.install
+usr/lib/*/sssd/modules/sssd_krb5_passkey_plugin.so
+usr/libexec/sssd/passkey_child
+usr/share/sssd/krb5-snippets/sssd_enable_passkey
+# sssd-ldap.install
+usr/lib/*/sssd/libsss_ldap.so
+usr/share/man/man5/sssd-ldap.5*
+usr/share/man/man5/sssd-ldap-attributes.5*
+# sssd-krb5.install
+etc/krb5.conf.d/enable_sssd_conf_dir
+usr/lib/*/sssd/libsss_krb5.so
+usr/share/man/man5/sssd-krb5.5*
+usr/share/sssd/krb5-snippets/enable_sssd_conf_dir
+# sssd-krb5-common.install
+usr/libexec/sssd/krb5_child
+usr/libexec/sssd/ldap_child
+# sssd-dbus.install
+${env:systemdsystemunitdir}/sssd-ifp.service
+usr/libexec/sssd/sssd_ifp
+usr/share/dbus-1/system-services/org.freedesktop.sssd.infopipe.service
+usr/share/dbus-1/system.d/org.freedesktop.sssd.infopipe.conf
+usr/share/man/man5/sssd-ifp.5
+# sssd-ad.install
+usr/libexec/sssd/gpo_child
+usr/lib/*/sssd/libsss_ad.so
+usr/share/man/man5/sssd-ad.5*
+# sssd-ad-commmon.install
+${env:systemdsystemunitdir}/sssd-pac.service
+${env:systemdsystemunitdir}/sssd-pac.socket
+usr/libexec/sssd/sssd_pac
+# sssd-kcm.install
+etc/krb5.conf.d/kcm_default_ccache
+${env:systemdsystemunitdir}/sssd-kcm.service
+${env:systemdsystemunitdir}/sssd-kcm.socket
+usr/libexec/sssd/sssd_kcm
+usr/share/sssd-kcm/kcm_default_ccache
+usr/share/man/man8/sssd-kcm.8
+# sssd-ipa.install
+usr/lib/*/sssd/libsss_ipa.so
+usr/libexec/sssd/selinux_child
+usr/share/man/man5/sssd-ipa.5*
+# sssd-idp.install
+etc/krb5.conf.d/sssd_enable_idp
+usr/lib/*/sssd/modules/sssd_krb5_idp_plugin.so
+usr/libexec/sssd/oidc_child
+usr/share/sssd/krb5-snippets/sssd_enable_idp
+# python3-sss.install
+usr/lib/python3/dist-packages/SSSDConfig/*.py
+usr/lib/python3/dist-packages/pysss.so
+usr/lib/python3/dist-packages/pysss_murmur.so
+# python3-libsss-nss-idmap.install
+usr/lib/python3/dist-packages/pysss_nss_idmap.so
+# python3-libsss-ibipa-hbac.install
+usr/lib/python3/dist-packages/pyhbac.so
+# libsss-nss-idmap0.install
+usr/lib/*/libsss_nss_idmap.so
+usr/lib/*/libsss_nss_idmap.so.*
+# libsss-idmap0.install
+usr/lib/*/libsss_idmap.so
+usr/lib/*/libsss_idmap.so.*
+# libsss-certmap.install
+usr/lib/*/libsss_certmap.so
+usr/lib/*/libsss_certmap.so.*
+usr/share/man/man5/sss-certmap.5
+# libpam-sss.install
+usr/lib/*/security/pam_sss.so
+usr/lib/*/security/pam_sss_gss.so
+usr/share/man/man8/pam_sss.8*
+usr/share/man/man8/pam_sss_gss.8*
+# libnss-sss.install
+usr/lib/*/libnss_sss.so.2
+# libipa-hbac0t64.install
+usr/lib/*/libipa_hbac.so
+usr/lib/*/libipa_hbac.so.*
+# pam
+usr/share/pam-configs/*
+# apparmor
+etc/apparmor.d/usr.sbin.sssd

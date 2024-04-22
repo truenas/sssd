@@ -1,0 +1,59 @@
+#include <tunables/global>
+
+/usr/sbin/sssd {
+  #include <abstractions/base>
+  #include <abstractions/kerberosclient>
+  #include <abstractions/nameservice>
+  #include <abstractions/user-tmp>
+
+  capability chown,
+  capability dac_override,
+  capability dac_read_search,
+  capability setgid,
+  capability setuid,
+  capability sys_admin,
+  capability sys_nice,
+  capability sys_resource,
+
+  @{PROC} r,
+  @{PROC}/[0-9]*/net/psched r,
+  @{PROC}/[0-9]*/status r,
+
+  /etc/krb5.keytab k,
+  /etc/ldap/ldap.conf r,
+  /etc/libnl-3/classid r,
+  /etc/localtime r,
+  /etc/shells r,
+  /etc/sssd/sssd.conf r,
+  /etc/sssd/conf.d/ r,
+  /etc/sssd/conf.d/** r,
+  /etc/gss/mech.d/ r,
+  /etc/gss/mech.d/** r,
+  /usr/share/sssd/cfg_rules.ini r,
+
+  /usr/lib/@{multiarch}/ldb/modules/ldb/* m,
+  /usr/lib/@{multiarch}/samba/ldb/* m,
+  /usr/lib/@{multiarch}/sssd/* rix,
+  /usr/libexec/sssd/* rmix,
+  /usr/sbin/sssd rmix,
+
+  /tmp/{,.}krb5cc_* rwk,
+
+  /var/lib/sss/* rw,
+  /var/lib/sss/db/* rwk,
+  /var/lib/sss/gpo_cache/* rw,
+  /var/lib/sss/mc/* rw,
+  /var/lib/sss/pipes/* rw,
+  /var/lib/sss/pipes/private/* rw,
+  /var/lib/sss/pubconf/* rw,
+  /var/lib/sss/pubconf/krb5.include.d/ r,
+  /var/lib/sss/pubconf/krb5.include.d/* rw,
+  /var/log/sssd/* rw,
+  /var/tmp/host_* rw,
+
+  /{,var/}run/sssd.pid rw,
+  /{,var/}run/systemd/notify w,
+
+  # Site-specific additions and overrides. See local/README for details.
+  #include <local/usr.sbin.sssd>
+}

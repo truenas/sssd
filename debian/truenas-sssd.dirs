@@ -1,0 +1,17 @@
+etc/sssd
+etc/sssd/conf.d
+var/lib/sss
+var/lib/sss/db
+var/lib/sss/deskprofile
+var/lib/sss/gpo_cache
+var/lib/sss/mc
+var/lib/sss/pipes
+var/lib/sss/pipes/private
+var/lib/sss/pubconf
+var/lib/sss/secrets
+var/log/sssd
+# sssd-krb5-common.dirs
+var/lib/sss/pubconf/krb5.include.d
+
+# sssd-ipa.dirs
+var/lib/sss/keytabs

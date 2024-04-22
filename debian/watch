@@ -1,0 +1,6 @@
+#git=https://github.com/SSSD/sssd
+version=4
+opts="uversionmangle=s/alpha/~alpha/;s/beta/~beta/,pgpsigurlmangle=s/$/.asc/, \
+      filenamemangle=s#@ANY_VERSION@$#$1.tar.gz#, \
+      downloadurlmangle=s#/tag/#/download/#;s#@ANY_VERSION@$#$1/@PACKAGE@-$1.tar.gz#" \
+https://github.com/SSSD/sssd/tags .*/releases/tag/@ANY_VERSION@

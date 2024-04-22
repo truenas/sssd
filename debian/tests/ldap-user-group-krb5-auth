@@ -1,0 +1,35 @@
+#!/bin/sh
+
+set -ex
+
+. debian/tests/util
+. debian/tests/common-tests
+
+mydomain="example.com"
+myhostname="ldap.${mydomain}"
+mysuffix="dc=example,dc=com"
+myrealm="EXAMPLE.COM"
+admin_dn="cn=admin,${mysuffix}"
+admin_pw="secret"
+ldap_user="testuser1"
+ldap_user_pw="testuser1secret"
+kerberos_principal_pw="testuser1kerberos"
+ldap_group="ldapusers"
+
+adjust_hostname "${myhostname}"
+reconfigure_slapd
+generate_certs "${myhostname}"
+enable_ldap_ssl
+populate_ldap_rfc2307
+create_realm "${myrealm}" "${myhostname}"
+create_krb_principal "${ldap_user}" "${kerberos_principal_pw}"
+configure_sssd_ldap_rfc2307_krb5_auth
+enable_pam_mkhomedir
+
+# tests begin here
+run_common_tests
+
+# login works with the kerberos password
+echo "The Kerberos principal can login on a terminal"
+kdestroy > /dev/null 2>&1 || /bin/true
+/usr/bin/expect -f debian/tests/login.exp "${ldap_user}" "${kerberos_principal_pw}" "${ldap_user}"@"${myrealm}"

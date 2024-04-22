@@ -1,0 +1,8 @@
+# Defaults for sssd, installed at /etc/default/sssd by the maintainer scripts
+
+# Additional options that are passed to the Daemon.
+# This is only used for /etc/init.d/sssd
+DAEMON_OPTS="-D -f"
+
+# Where to direct debug output, valid options are 'files', 'journald', 'stderr'.
+#DEBUG_LOGGER=--logger=journald

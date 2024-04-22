@@ -1,0 +1,30 @@
+#!/bin/sh
+
+set -e
+
+APP_PROFILE="usr.sbin.sssd"
+APP_CONFFILE="/etc/apparmor.d/$APP_PROFILE"
+APP_COMPLAIN="/etc/apparmor.d/force-complain/$APP_PROFILE"
+
+inst_complain_profile() {
+    # Create a symlink to the yet-to-be-unpacked profile
+    mkdir -p `dirname $APP_COMPLAIN` 2>/dev/null || true
+    ln -sf $APP_CONFFILE $APP_COMPLAIN
+}
+
+case "$1" in
+install)
+    # Force the AppArmor profile to complain mode on install
+    inst_complain_profile
+    ;;
+upgrade)
+    if dpkg --compare-versions "$2" le 2.8.2-3; then
+	# 2.8.2-2 added a line for subid which was premature given that
+	# libsubid supports only a single database. Let's remove it to avoid
+	# breaking systems where the user expects /etc/sub[ug]id to continue to
+	# work.
+	sed -E -i "${DPKG_ROOT}/etc/nsswitch.conf" -e '/^subid:\s*sss\s*$/d'
+    fi
+esac
+
+#DEBHELPER#

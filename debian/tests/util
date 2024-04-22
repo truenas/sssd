@@ -1,0 +1,243 @@
+#!/bin/sh
+
+reconfigure_slapd() {
+    debconf-set-selections << EOF
+slapd	slapd/domain	string	${mydomain}
+slapd	shared/organization	string	${mydomain}
+slapd	slapd/password1	password	${admin_pw}
+slapd	slapd/password2	password	${admin_pw}
+EOF
+    rm -rf /var/backups/*slapd* /var/backups/unknown*ldapdb
+    dpkg-reconfigure -fnoninteractive -pcritical slapd
+}
+
+die() {
+    echo "ERROR"
+    echo "$@"
+    exit 1
+}
+
+enable_pam_mkhomedir() {
+    if ! grep -qE "^session.*pam_mkhomedir\.so" /etc/pam.d/common-session; then
+        echo "session optional pam_mkhomedir.so" >> /etc/pam.d/common-session
+    fi
+}
+
+adjust_hostname() {
+    local myhostname="$1"
+
+    echo "${myhostname}" > /etc/hostname
+    hostname "${myhostname}"
+    if ! grep -qE "${myhostname}" /etc/hosts; then
+        # just so it's resolvable
+        echo "127.0.1.10 ${myhostname}" >> /etc/hosts
+    fi
+}
+
+generate_certs() {
+    local cn="$1"
+    local cert="/etc/ldap/server.pem"
+    local key="/etc/ldap/server.key"
+    local cnf="/etc/ldap/openssl.cnf"
+
+    cat > "$cnf" <<EOF
+[ req ]
+default_bits            = 1024
+default_keyfile         = privkey.pem
+distinguished_name      = req_distinguished_name
+prompt                  = no
+policy                  = policy_anything
+
+[ req_distinguished_name ]
+commonName              = ${cn}
+EOF
+    openssl req -new -x509 -nodes -out "$cert" -keyout "$key" -config "$cnf"
+    chmod 0640 "$key"
+    chgrp openldap "$key"
+    if [ ! -f "$cert" ]; then
+        echo "ERROR, failed to generate certificate for ldap test"
+        exit 1
+    fi
+    if [ ! -f "$key" ]; then
+        echo "ERROR, failed to generate key for ldap test"
+        exit 1
+    fi
+}
+
+populate_ldap_rfc2307() {
+    {
+        cat <<EOF
+dn: ou=People,${mysuffix}
+ou: People
+objectClass: organizationalUnit
+
+dn: ou=Group,${mysuffix}
+ou: Group
+objectClass: organizationalUnit
+
+dn: uid=${ldap_user},ou=People,${mysuffix}
+uid: ${ldap_user}
+objectClass: inetOrgPerson
+objectClass: posixAccount
+cn: ${ldap_user}
+sn: ${ldap_user}
+givenName: ${ldap_user}
+mail: ${ldap_user}@${mydomain}
+userPassword: ${ldap_user_pw}
+uidNumber: 10001
+gidNumber: 10001
+loginShell: /bin/bash
+homeDirectory: /home/${ldap_user}
+
+dn: cn=${ldap_user},ou=Group,${mysuffix}
+cn: ${ldap_user}
+objectClass: posixGroup
+gidNumber: 10001
+memberUid: ${ldap_user}
+
+dn: cn=${ldap_group},ou=Group,${mysuffix}
+cn: ${ldap_group}
+objectClass: posixGroup
+gidNumber: 10100
+memberUid: ${ldap_user}
+EOF
+    } | ldapadd -x -D "${admin_dn}" -w "${admin_pw}"
+}
+
+configure_sssd_ldap_rfc2307_krb5_auth() {
+    cat > /etc/sssd/sssd.conf <<EOF
+[sssd]
+config_file_version = 2
+services = nss, pam
+domains = LDAP
+
+[domain/LDAP]
+id_provider = ldap
+ldap_uri = ldap://${myhostname}
+auth_provider = krb5
+krb5_server = ${myhostname}
+krb5_realm = ${myrealm}
+cache_credentials = True
+ldap_search_base = ${mysuffix}
+EOF
+    chmod 0600 /etc/sssd/sssd.conf
+    systemctl restart sssd || {
+        systemctl status --lines 100 sssd
+        false
+    }
+}
+
+configure_sssd_ldap_rfc2307() {
+    cat > /etc/sssd/sssd.conf <<EOF
+[sssd]
+config_file_version = 2
+services = nss, pam
+domains = LDAP
+
+[domain/LDAP]
+id_provider = ldap
+ldap_uri = ldap://${myhostname}
+cache_credentials = True
+ldap_search_base = ${mysuffix}
+EOF
+    chmod 0600 /etc/sssd/sssd.conf
+    systemctl restart sssd || {
+        systemctl status --lines 100 sssd
+        false
+    }
+}
+
+check_local_user() {
+    local local_user="$1"
+
+    if grep -q "^${local_user}" /etc/passwd; then
+        die "Found ${local_user} in /etc/passwd"
+    fi
+}
+
+check_local_group() {
+    local local_group="$1"
+
+    if grep -q "^${local_group}" /etc/group; then
+        die "Found ${local_group} in /etc/group"
+    fi
+}
+
+check_getent_user() {
+    local getent_user="$1"
+    local output
+
+    output=$(getent passwd ${getent_user})
+    if [ -z "${output}" ]; then
+        die "${getent_user} not found via getent passwd"
+    fi
+}
+
+check_getent_group() {
+    local getent_group="$1"
+    local output
+
+    output=$(getent group ${getent_group})
+    if [ -z "${output}" ]; then
+        die "${getent_group} not found via getent group"
+    fi
+}
+
+create_realm() {
+    local realm_name="$1"
+    local kerberos_server="$2"
+
+    # start fresh
+    rm -rf /var/lib/krb5kdc/*
+    rm -rf /etc/krb5kdc/*
+    rm -f /etc/krb5.keytab
+
+    # setup some defaults
+    cat > /etc/krb5kdc/kdc.conf <<EOF
+[kdcdefaults]
+    kdc_ports = 750,88
+[realms]
+    ${realm_name} = {
+	    database_name = /var/lib/krb5kdc/principal
+	    admin_keytab = FILE:/etc/krb5kdc/kadm5.keytab
+	    acl_file = /etc/krb5kdc/kadm5.acl
+	    key_stash_file = /etc/krb5kdc/stash
+	    kdc_ports = 750,88
+	    max_life = 10h 0m 0s
+	    max_renewable_life = 7d 0h 0m 0s
+	    master_key_type = des3-hmac-sha1
+	    #supported_enctypes = aes256-cts:normal aes128-cts:normal
+	    default_principal_flags = +preauth
+    }
+EOF
+
+    cat > /etc/krb5.conf <<EOF
+[libdefaults]
+    default_realm = ${realm_name}
+    kdc_timesync = 1
+    ccache_type = 4
+    forwardable = true
+    proxiable = true
+    fcc-mit-ticketflags = true
+[realms]
+	${realm_name} = {
+		kdc = ${kerberos_server}
+		admin_server = ${kerberos_server}
+	}
+EOF
+    echo "# */admin *" > /etc/krb5kdc/kadm5.acl
+
+    # create the realm
+    kdb5_util create -s -P secretpassword
+
+    # restart services
+    systemctl restart krb5-kdc.service krb5-admin-server.service
+}
+
+create_krb_principal() {
+    local principal="$1"
+    local password="$2"
+
+    kadmin.local -q "addprinc -pw ${password} ${principal}"
+}
+

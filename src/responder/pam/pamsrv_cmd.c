@@ -915,6 +915,7 @@ errno_t pam_get_auth_types(struct pam_data *pd,
         /* If the backend cannot determine which authentication types are
          * available the default would be to prompt for a password. */
         types.password_auth = true;
+        types.backend_returned_no_auth_type = true;
     }
 
     DEBUG(SSSDBG_TRACE_ALL, "Authentication types for user [%s] and service "
@@ -1002,7 +1003,7 @@ static errno_t pam_eval_local_auth_policy(TALLOC_CTX *mem_ctx,
             }
 
             /* Store the local auth types, in case we go offline */
-            if (!auth_types.password_auth) {
+            if (!auth_types.backend_returned_no_auth_type) {
                 ret = set_local_auth_type(preq, sc_allow, passkey_allow);
                 if (ret != EOK) {
                     DEBUG(SSSDBG_FATAL_FAILURE,
@@ -1418,6 +1419,15 @@ void pam_reply(struct pam_auth_req *preq)
         goto done;
     }
 
+#ifdef BUILD_PASSKEY
+    if(pd->cmd == SSS_PAM_AUTHENTICATE &&
+       pd->pam_status == PAM_NEW_AUTHTOK_REQD &&
+       sss_authtok_get_type(pd->authtok) == SSS_AUTHTOK_TYPE_PASSKEY_REPLY) {
+            DEBUG(SSSDBG_TRACE_FUNC, "Passkey authentication reply, ignoring "
+                                     "new authtok required status\n");
+            pd->pam_status = PAM_SUCCESS;
+    }
+
     /* Passkey auth user notification if no TGT is granted */
     if (pd->cmd == SSS_PAM_AUTHENTICATE &&
         pd->pam_status == PAM_SUCCESS &&
@@ -1429,6 +1439,7 @@ void pam_reply(struct pam_auth_req *preq)
                   "User [%s] logged in with local passkey authentication, single "
                   "sign on ticket is not obtained.\n", pd->user);
     }
+#endif /* BUILD_PASSKEY */
 
     /* Account expiration warning is printed for sshd. If pam_verbosity
      * is equal or above PAM_VERBOSITY_INFO then all services are informed
@@ -1918,7 +1929,7 @@ static int pam_forwarder(struct cli_ctx *cctx, int pam_cmd)
 
     ret = pam_forwarder_parse_data(cctx, pd);
     if (ret == EAGAIN) {
-        req = sss_dp_get_domains_send(cctx->rctx, cctx->rctx, true, pd->domain);
+        req = sss_dp_get_domains_send(cctx, cctx->rctx, true, pd->domain);
         if (req == NULL) {
             ret = ENOMEM;
         } else {
@@ -2200,8 +2211,8 @@ static void pam_forwarder_lookup_by_cert_done(struct tevent_req *req)
                 ret = ENOENT;
                 goto done;
             }
-
-            if (cert_count > 1) {
+            /* Multiple certificates are only expected during pre-auth */
+            if (cert_count > 1 && preq->pd->cmd == SSS_PAM_PREAUTH) {
                 for (preq->current_cert = preq->cert_list;
                      preq->current_cert != NULL;
                      preq->current_cert = sss_cai_get_next(preq->current_cert)) {
@@ -2285,7 +2296,9 @@ static void pam_forwarder_lookup_by_cert_done(struct tevent_req *req)
             }
 
             /* If logon_name was not given during authentication add a
-             * SSS_PAM_CERT_INFO message to send the name to the caller. */
+             * SSS_PAM_CERT_INFO message to send the name to the caller.
+             * Additionally initial_cert_auth_successful is set to
+             * indicate that the user is already authenticated. */
             if (preq->pd->cmd == SSS_PAM_AUTHENTICATE
                     && preq->pd->logon_name == NULL) {
                 ret = add_pam_cert_response(preq->pd,
@@ -2297,6 +2310,8 @@ static void pam_forwarder_lookup_by_cert_done(struct tevent_req *req)
                     preq->pd->pam_status = PAM_AUTHINFO_UNAVAIL;
                     goto done;
                 }
+
+                preq->initial_cert_auth_successful = true;
             }
 
             /* cert_user will be returned to the PAM client as user name, so
@@ -2851,12 +2866,15 @@ static void pam_dom_forwarder(struct pam_auth_req *preq)
         if (found) {
             if (local_policy != NULL && strcasecmp(local_policy, "only") == 0) {
                 talloc_free(tmp_ctx);
-                DEBUG(SSSDBG_IMPORTANT_INFO, "Local auth only set, skipping online auth\n");
+                DEBUG(SSSDBG_IMPORTANT_INFO,
+                      "Local auth only set and matching certificate was found, "
+                      "skipping online auth\n");
                 if (preq->pd->cmd == SSS_PAM_PREAUTH) {
                     preq->pd->pam_status = PAM_SUCCESS;
                 } else if (preq->pd->cmd == SSS_PAM_AUTHENTICATE
                                 && IS_SC_AUTHTOK(preq->pd->authtok)
-                                && preq->cert_auth_local) {
+                                && (preq->cert_auth_local
+                                        || preq->initial_cert_auth_successful)) {
                     preq->pd->pam_status = PAM_SUCCESS;
                     preq->callback = pam_reply;
                 }

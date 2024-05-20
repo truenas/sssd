@@ -86,6 +86,8 @@ Depends:
  libpam-runtime (>= 1.0.1-6),
  ${misc:Depends}
  ${shlibs:Depends}
+Conflicts:
+ sssd
 Provides:
  sssd (= 2.9.4),
  sssd-common,

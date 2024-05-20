@@ -17,7 +17,6 @@ from sssd.testlib.common.utils import PkiTools, sssdTools, LdapOperations
 from sssd.testlib.common.libdirsrv import DirSrvWrap
 from sssd.testlib.common.exceptions import PkiLibException, LdapException
 
-
 pytest_plugins = (
     'sssd.testlib.common.fixtures',
     'pytest_importance',
@@ -42,9 +41,8 @@ def pytest_configure():
 def multidomain_sssd(session_multihost, request):
     """ Multidomain sssd configuration """
     session_multihost.client[0].service_sssd('stop')
-    bkup = 'cp %s %s.orig' % (SSSD_DEFAULT_CONF, SSSD_DEFAULT_CONF)
-    session_multihost.client[0].run_command(bkup)
     tools = sssdTools(session_multihost.client[0])
+    tools.backup_sssd_conf()
     tools.remove_sss_cache('/var/lib/sss/db')
     tools.remove_sss_cache('/var/lib/sss/mc')
 
@@ -113,8 +111,7 @@ def multidomain_sssd(session_multihost, request):
         """ Remove sssd configuration """
         stop_sssd = 'systemctl stop sssd'
         session_multihost.client[0].run_command(stop_sssd)
-        cmd = 'cp -f %s.orig %s' % (SSSD_DEFAULT_CONF, SSSD_DEFAULT_CONF)
-        session_multihost.client[0].run_command(cmd)
+        tools.restore_sssd_conf()
     request.addfinalizer(removesssd)
     return _modifysssd
 
@@ -244,15 +241,13 @@ def enable_sss_sudo_nsswitch(session_multihost, request):
 @pytest.fixture(scope='function')
 def backupsssdconf(session_multihost, request):
     """ Backup and restore sssd.conf """
-    bkup = 'cp -f %s %s.orig' % (SSSD_DEFAULT_CONF,
-                                 SSSD_DEFAULT_CONF)
-    session_multihost.client[0].run_command(bkup)
+    tools = sssdTools(session_multihost.client[0])
+    tools.backup_sssd_conf()
     session_multihost.client[0].service_sssd('stop')
 
     def restoresssdconf():
         """ Restore sssd.conf """
-        restore = 'cp -f %s.orig %s' % (SSSD_DEFAULT_CONF, SSSD_DEFAULT_CONF)
-        session_multihost.client[0].run_command(restore)
+        tools.restore_sssd_conf()
     request.addfinalizer(restoresssdconf)
 
 
@@ -761,10 +756,10 @@ def install_nslcd(session_multihost, request):
     execute_cmd(session_multihost, "echo 'uid nslcd' > /etc/nslcd.conf")
     execute_cmd(session_multihost, "echo 'gid ldap' >> /etc/nslcd.conf")
     execute_cmd(session_multihost, f"echo 'uri ldap://"
-                                   f"{session_multihost.master[0].ip}'"
-                                   f" >> /etc/nslcd.conf")
+                f"{session_multihost.master[0].ip}'"
+                f" >> /etc/nslcd.conf")
     execute_cmd(session_multihost, f"echo 'base {ds_suffix}' >> "
-                                   f"/etc/nslcd.conf")
+                f"/etc/nslcd.conf")
     execute_cmd(session_multihost, "systemctl restart nslcd")
 
     def restore_install_nslcd():
@@ -836,13 +831,15 @@ base %s
 def template_sssdconf(session_multihost, request):
     """ Copy template sssd conf for multidomain tests """
     cwd = os.path.dirname(os.path.abspath(__file__))
-    remote = '/etc/sssd/sssd.conf'
     source = posixpath.join(cwd, 'sssd_multidomain.conf')
-    session_multihost.client[0].transport.put_file(source, remote)
+    session_multihost.client[0].transport.put_file(source, SSSD_DEFAULT_CONF)
+    tools = sssdTools(session_multihost.client[0])
+    tools.fix_sssd_conf_perms()
+
 
     def remove_template():
         """ Remove template sssd.conf """
-        cmd = 'rm -f /etc/sssd/sssd.conf'
+        cmd = f'rm -f {SSSD_DEFAULT_CONF}'
         session_multihost.client[0].run_command(cmd)
     request.addfinalizer(remove_template)
 
@@ -1277,6 +1274,8 @@ config_file_version = 2
 services = nss, pam '''
     session_multihost.client[0].put_file_contents('%s' % (SSSD_DEFAULT_CONF),
                                                   contents)
+    tools = sssdTools(session_multihost.client[0])
+    tools.fix_sssd_conf_perms()
 
     def remove_default_sssd():
         """ Remove default sssd.conf """
@@ -1329,8 +1328,7 @@ def krb_connection_timeout(
     session_multihost.client[0].run_command(restore_selinux)
     sssd_tools = sssdTools(session_multihost.client[0])
     sssd_tools.remove_sss_cache('/var/lib/sss/db/')
-    chmod_cmd = "chmod 600 /etc/sssd/sssd.conf"
-    session_multihost.client[0].run_command(chmod_cmd)
+    sssd_tools.fix_sssd_conf_perms()
 
 
 @pytest.fixture(scope='class')
@@ -1420,10 +1418,8 @@ def setup_sshd_authorized_keys(session_multihost, request):
 @pytest.fixture(scope='class')
 def enable_ssh_responder(session_multihost, request):
     """ Enable ssh responder in sssd.conf """
-    backup_sssd = 'cp -f /etc/sssd/sssd.conf /etc/sssd/sssd.conf.backup'
-    restore_sssd_conf = 'cp -f /etc/sssd/sssd.conf.backup /etc/sssd/sssd.conf'
-    session_multihost.client[0].run_command(backup_sssd)
     tools = sssdTools(session_multihost.client[0])
+    tools.backup_sssd_conf()
     session_multihost.client[0].service_sssd('stop')
     tools.remove_sss_cache('/var/lib/sss/db')
     sssd_params = {'services': 'nss, pam, ssh'}
@@ -1432,7 +1428,7 @@ def enable_ssh_responder(session_multihost, request):
 
     def restore_sssd():
         """ Restore sssd.conf """
-        session_multihost.client[0].run_command(restore_sssd_conf)
+        tools.restore_sssd_conf()
     request.addfinalizer(restore_sssd)
 
 
@@ -1440,20 +1436,30 @@ def enable_ssh_responder(session_multihost, request):
 def enable_sssd_hostmap(session_multihost, request):
     """ Enables sssd for network and host database in nsswitch.conf """
     tools = sssdTools(session_multihost.client[0])
+    # Since Fedora 36+ support of user-nsswitch was dropped
+    # This applies to CentOS 10 and RHEL 10
     nsswitch_file = '/etc/authselect/user-nsswitch.conf'
+    cmd = session_multihost.client[0].run_command(
+        f"test -f {nsswitch_file}", raiseonerr=False)
+    has_user_nsswith = cmd.returncode == 0
+    if not has_user_nsswith:
+        nsswitch_file = "/etc/nsswitch.conf"
+
     bkup = f'cp -vf {nsswitch_file} {nsswitch_file}_bkp'
     session_multihost.client[0].run_command(bkup)
 
     for value in ['hosts', 'networks']:
         update_nsswitch = f"sed -i 's/{value}:/{value}: sss/' {nsswitch_file}"
         session_multihost.client[0].run_command(update_nsswitch)
-    authselect = 'authselect select sssd'
-    session_multihost.client[0].run_command(authselect)
+    if has_user_nsswith:
+        authselect = 'authselect select sssd'
+        session_multihost.client[0].run_command(authselect)
 
     def restore_nsswitch():
         restore = f"cp -vf {nsswitch_file}_bkp {nsswitch_file}"
         session_multihost.client[0].run_command(restore)
-        session_multihost.client[0].run_command(authselect)
+        if has_user_nsswith:
+            session_multihost.client[0].run_command(authselect)
         tools.clear_sssd_cache()
         # remove the backup file
         remove_bkup = 'rm -f %s_bkup' % nsswitch_file

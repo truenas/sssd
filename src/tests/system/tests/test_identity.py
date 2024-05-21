@@ -1,5 +1,5 @@
 """
-SSSD Client identity Lookups
+SSSD Identity Lookup Test Cases
 
 :requirement: IDM-SSSD-REQ: Client side performance improvements
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 from sssd_test_framework.roles.client import Client
-from sssd_test_framework.roles.generic import GenericProvider
+from sssd_test_framework.roles.generic import GenericADProvider, GenericProvider
 from sssd_test_framework.topology import KnownTopologyGroup
 
 
@@ -476,3 +476,88 @@ def test_identity__lookup_users_fully_qualified_name_and_case_insensitive(client
         result = client.tools.id(name)
         assert result is not None, f"User {name} was not found using id"
         assert result.memberof([103, 1003]), f"User {name} is member of wrong groups"
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.authentication
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_identity__lookup_idmapping_of_posix_and_non_posix_user_and_group(client: Client, provider: GenericADProvider):
+    """
+    :title: Check ID mapping of POSIX and non POSIX users in AD type directories when ldap_id_mapping is false
+    :setup:
+        1. Create user with POSIX attriubtes
+        2. Create group with POSIX attributes
+        3. Create user with no POSIX attributes
+        4. Create group with no POSIX attributes
+        5. Configure SSSD with "ldap_id_mapping" = false
+        6. Start SSSD
+    :steps:
+        1. Query POSIX group information
+        2. Query POSIX user information
+        3. Query Non-POSIX group information
+        4. Query Non-POSIX user information
+    :expectedresults:
+        1. POSIX group information should be returned and
+            gid matches the one supplied in creation
+        2. POSIX user information should be returned and
+            uid matches the one supplied in creation
+        3. Non-POSIX group information should not be returned
+        4. Non-POSIX user information should not be returned
+    :customerscenario: False
+    """
+
+    u1 = provider.user("posix_user").add(
+        uid=10001, gid=20001, password="Secret123", gecos="User for tests", shell="/bin/bash"
+    )
+    provider.group("posix_group").add(gid=20001).add_member(u1)
+
+    u2 = provider.user("nonposix_user").add(password="Secret123")
+    provider.group("nonposix_group").add().add_member(u2)
+
+    client.sssd.domain["ldap_id_mapping"] = "false"
+    client.sssd.start()
+
+    result = client.tools.id("posix_user")
+    assert result is not None, "posix-user is not returned by sssd"
+    assert result.group.id == 20001, "gid returned not matched the one provided"
+    assert result.user.id == 10001, "uid returned not matched the one provided"
+
+    assert client.tools.getent.group("posix_group") is not None, "posix-group is not returned by sssd"
+    assert client.tools.getent.group("nonposix_group") is None, "non-posix group is returned by sssd, it should not be"
+    assert client.tools.getent.passwd("nonposix_user") is None, "non-posix user is returned by sssd, it should not be"
+
+
+@pytest.mark.ticket(bz=1695577)
+@pytest.mark.topology(KnownTopologyGroup.AnyProvider)
+def test_identity__lookup_when_private_groups_set_to_hybrid(client: Client, provider: GenericProvider):
+    """
+    :title: auto_private_groups set to hybrid
+    :setup:
+        1. Add user "user_same" with uid equals to gid
+        2. Add user "user_different" with uid not equals to gid
+        3. Set auto_private_groups in sssd.conf to hybrid and turn of ldap_id_mapping
+        4. Start SSSD
+    :steps:
+        1. getent passwd "user_same"
+        2. getent passwd "user_different"
+    :expectedresults:
+        1. Uid equals to gid
+        2. Uid does not equal to gid
+    :customerscenario: True
+    :requirement: IDM-SSSD-REQ: SSSD can automatically create user private groups for users
+    """
+    provider.user("user_same").add(uid=111111, gid=111111)
+    provider.user("user_different").add(uid=111111, gid=100000)
+
+    client.sssd.domain["auto_private_groups"] = "hybrid"
+    client.sssd.domain["ldap_id_mapping"] = "false"
+
+    client.sssd.start()
+
+    result = client.tools.getent.passwd("user_same@test")
+    assert result, "getent passwd failed on user_same"
+    assert result.uid == result.gid, "gid and uid for user_same are not same"
+
+    result = client.tools.getent.passwd("user_different@test")
+    assert result, "getent passwd failed on user_different"
+    assert result.uid != result.gid, "gid and uid for user_different are same"

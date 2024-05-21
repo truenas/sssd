@@ -87,7 +87,7 @@ Depends:
  ${misc:Depends}
  ${shlibs:Depends}
 Provides:
- sssd,
+ sssd (= 2.9.4),
  sssd-common,
  sssd-ad,
  sssd-ad-common,
@@ -110,6 +110,7 @@ Provides:
  libsss-idmap0,
  libsss-nss-idmap0,
  libsss-sudo,
+ python3-sss,
  python3-libipa-hbac,
  python3-libsss-nss-idmap,
 Description: System Security Services Daemon

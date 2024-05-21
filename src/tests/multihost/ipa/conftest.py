@@ -201,15 +201,13 @@ def add_group_member(session_multihost, request):
 @pytest.fixture(scope='function')
 def backupsssdconf(session_multihost, request):
     """ Backup and restore sssd.conf """
-    bkup = 'cp -f %s %s.orig' % (SSSD_DEFAULT_CONF,
-                                 SSSD_DEFAULT_CONF)
-    session_multihost.client[0].run_command(bkup)
+    tools = sssdTools(session_multihost.client[0])
+    tools.backup_sssd_conf()
     session_multihost.client[0].service_sssd('stop')
 
     def restoresssdconf():
         """ Restore sssd.conf """
-        restore = 'cp -f %s.orig %s' % (SSSD_DEFAULT_CONF, SSSD_DEFAULT_CONF)
-        session_multihost.client[0].run_command(restore)
+        tools.restore_sssd_conf()
     request.addfinalizer(restoresssdconf)
 
 # ====================  Class Scoped Fixtures ================
@@ -221,9 +219,11 @@ def environment_setup(session_multihost, request):
     Install necessary packages
     """
     client = session_multihost.client[0]
-    client.run_command("yum "
-                       "--enablerepo=*-CRB install"
-                       " -y shadow-utils*")
+    if "Fedora" in client.distro:
+        client.run_command("yum install -y shadow-utils*")
+    else:
+        client.run_command("yum --enablerepo=*-CRB install -y shadow-utils*")
+
     client.run_command("yum install -y gcc")
     client.run_command("yum install -y podman")
     with pytest.raises(subprocess.CalledProcessError):

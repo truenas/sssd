@@ -1,5 +1,5 @@
 """
-Files test provider cases
+SSSD File Provider Test Case
 
 :requirement: IDM-SSSD-REQ :: SSSD is default for local resolution
 """
@@ -15,7 +15,7 @@ from sssd_test_framework.topology import KnownTopology
 
 @pytest.mark.builtwith("files-provider")
 @pytest.mark.topology(KnownTopology.Client)
-def test_files__getent_does_not_handle_root(client: Client):
+def test_files__lookup_root(client: Client):
     """
     :title: Getent call doesnt work on root, when service specified as "sss"
     :setup:
@@ -36,7 +36,7 @@ def test_files__getent_does_not_handle_root(client: Client):
 
 @pytest.mark.builtwith("files-provider")
 @pytest.mark.topology(KnownTopology.Client)
-def test_files__simple_getent(client: Client):
+def test_files__lookup_user(client: Client):
     """
     :title: Simple getent call
     :setup:
@@ -62,7 +62,7 @@ def test_files__simple_getent(client: Client):
 
 @pytest.mark.builtwith("files-provider")
 @pytest.mark.topology(KnownTopology.Client)
-def test_files__enumeration(client: Client):
+def test_files__lookup_should_not_enumerate_users(client: Client):
     """
     :title: Files provider should not enumerate
     :setup:
@@ -83,7 +83,7 @@ def test_files__enumeration(client: Client):
 
 @pytest.mark.builtwith("files-provider")
 @pytest.mark.topology(KnownTopology.Client)
-def test_files__user_modify(client: Client):
+def test_files__lookup_user_shows_updated_user_info(client: Client):
     """
     :title: User have his homedir updated, after passwd
     :setup:
@@ -104,13 +104,13 @@ def test_files__user_modify(client: Client):
         5. homedir is updated correctly
     :customerscenario: False
     """
-    client.local.user("user1").add(password="Secret123", home="/tmp")
+    client.local.user("user1").add(password="Secret123", home="/home/user1-tmp")
     client.sssd.sssd["enable_files_domain"] = "true"
     client.sssd.start()
 
     result = client.tools.getent.passwd("user1", service="sss")
     assert result is not None
-    assert result.home == "/tmp"
+    assert result.home == "/home/user1-tmp"
 
     client.local.user("user1").modify(home="/home/user1")
 

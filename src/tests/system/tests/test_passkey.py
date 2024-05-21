@@ -22,7 +22,7 @@ from sssd_test_framework.topology import KnownTopology, KnownTopologyGroup
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopology.Client)
 @pytest.mark.builtwith(client="passkey")
-def test_passkey__register__sssctl(client: Client, moduledatadir: str, testdatadir: str):
+def test_passkey__register_sssctl(client: Client, moduledatadir: str, testdatadir: str):
     """
     :title: Register a key with sssctl
     :setup:
@@ -51,7 +51,7 @@ def test_passkey__register__sssctl(client: Client, moduledatadir: str, testdatad
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopology.IPA)
 @pytest.mark.builtwith(client="passkey", ipa="passkey")
-def test_passkey__register__ipa(ipa: IPA, moduledatadir: str, testdatadir: str):
+def test_passkey__register_ipa(ipa: IPA, moduledatadir: str, testdatadir: str):
     """
     :title: Register a passkey with the IPA command
     :setup:
@@ -82,7 +82,7 @@ def test_passkey__register__ipa(ipa: IPA, moduledatadir: str, testdatadir: str):
 @pytest.mark.importance("critical")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
 @pytest.mark.builtwith(client="passkey", provider="passkey")
-def test_passkey__su(client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str):
+def test_passkey__su_user(client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str):
     """
     :title: Check su authentication of user with LDAP, IPA, AD and Samba
     :setup:
@@ -96,8 +96,7 @@ def test_passkey__su(client: Client, provider: GenericProvider, moduledatadir: s
     """
     suffix = type(provider).__name__.lower()
 
-    if suffix == "ldap":
-        client.sssd.domain["local_auth_policy"] = "only"
+    client.sssd.domain["local_auth_policy"] = "only"
 
     with open(f"{testdatadir}/passkey-mapping.{suffix}") as f:
         provider.user("user1").add().passkey_add(f.read().strip())
@@ -116,7 +115,9 @@ def test_passkey__su(client: Client, provider: GenericProvider, moduledatadir: s
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
 @pytest.mark.builtwith(client="passkey", provider="passkey")
-def test_passkey__su_fail_pin(client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str):
+def test_passkey__su_user_with_failed_pin(
+    client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
+):
     """
     :title: Check su authentication deny of user with LDAP, IPA, AD and Samba with incorrect pin
     :setup:
@@ -130,8 +131,7 @@ def test_passkey__su_fail_pin(client: Client, provider: GenericProvider, moduled
     """
     suffix = type(provider).__name__.lower()
 
-    if suffix == "ldap":
-        client.sssd.domain["local_auth_policy"] = "only"
+    client.sssd.domain["local_auth_policy"] = "only"
 
     with open(f"{testdatadir}/passkey-mapping.{suffix}") as f:
         provider.user("user1").add().passkey_add(f.read().strip())
@@ -150,7 +150,9 @@ def test_passkey__su_fail_pin(client: Client, provider: GenericProvider, moduled
 @pytest.mark.importance("critical")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
 @pytest.mark.builtwith(client="passkey", provider="passkey")
-def test_passkey__su_fail_mapping(client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str):
+def test_passkey__su_user_with_incorrect_mapping(
+    client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
+):
     """
     :title: Check su authentication deny of user with LDAP, IPA, AD and Samba with incorrect mapping
     :setup:
@@ -164,8 +166,7 @@ def test_passkey__su_fail_mapping(client: Client, provider: GenericProvider, mod
     """
     suffix = type(provider).__name__.lower()
 
-    if suffix == "ldap":
-        client.sssd.domain["local_auth_policy"] = "only"
+    client.sssd.domain["local_auth_policy"] = "only"
 
     # Here, we are using passkey-mapping from the other FIDO2 key.
 
@@ -186,7 +187,7 @@ def test_passkey__su_fail_mapping(client: Client, provider: GenericProvider, mod
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
 @pytest.mark.builtwith(client="passkey", provider="passkey")
-def test_passkey__su_srv_not_resolvable(
+def test_passkey__su_user_when_server_is_not_resolvable(
     client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
 ):
     """
@@ -209,11 +210,12 @@ def test_passkey__su_srv_not_resolvable(
         server_url = "ipa_server"
     elif suffix == "ldap":
         server_url = "ldap_uri"
-        client.sssd.domain["local_auth_policy"] = "only"
     elif suffix == "samba" or "ad":
         server_url = "ad_server"
     else:
         assert False, "provider not found"
+
+    client.sssd.domain["local_auth_policy"] = "only"
 
     with open(f"{testdatadir}/passkey-mapping.{suffix}") as f:
         provider.user("user1").add().passkey_add(f.read().strip())
@@ -246,7 +248,9 @@ def test_passkey__su_srv_not_resolvable(
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
 @pytest.mark.builtwith(client="passkey", provider="passkey")
-def test_passkey__offline_su(client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str):
+def test_passkey__su_user_when_offline(
+    client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
+):
     """
     :title: Check offline su authentication of a user with LDAP, IPA, AD and Samba
     :setup:
@@ -269,8 +273,7 @@ def test_passkey__offline_su(client: Client, provider: GenericProvider, moduleda
     with open(f"{testdatadir}/passkey-mapping.{suffix}") as f:
         provider.user("user1").add().passkey_add(f.read().strip())
 
-    if suffix == "ldap":
-        client.sssd.domain["local_auth_policy"] = "only"
+    client.sssd.domain["local_auth_policy"] = "only"
 
     client.sssd.start()
 
@@ -302,7 +305,7 @@ def test_passkey__offline_su(client: Client, provider: GenericProvider, moduleda
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
 @pytest.mark.builtwith(client="passkey", provider="passkey")
-def test_passkey__user_fetch_from_cache(
+def test_passkey__lookup_user_from_cache(
     client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
 ):
     """
@@ -339,7 +342,7 @@ def test_passkey__user_fetch_from_cache(
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
 @pytest.mark.builtwith(client="passkey", provider="passkey")
-def test_passkey__su_multi_keys_for_same_user(
+def test_passkey__su_user_with_multiple_keys(
     client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
 ):
     """
@@ -357,8 +360,7 @@ def test_passkey__su_multi_keys_for_same_user(
     suffix = type(provider).__name__.lower()
     user_add = provider.user("user1").add()
 
-    if suffix == "ldap":
-        client.sssd.domain["local_auth_policy"] = "only"
+    client.sssd.domain["local_auth_policy"] = "only"
 
     for n in range(1, 5):
         with open(f"{testdatadir}/passkey-mapping.{suffix}{n}") as f:
@@ -378,7 +380,7 @@ def test_passkey__su_multi_keys_for_same_user(
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
 @pytest.mark.builtwith(client="passkey", provider="passkey")
-def test_passkey__su_same_key_for_multi_user(
+def test_passkey__su_user_same_key_for_other_users(
     client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
 ):
     """
@@ -394,8 +396,7 @@ def test_passkey__su_same_key_for_multi_user(
     """
     suffix = type(provider).__name__.lower()
 
-    if suffix == "ldap":
-        client.sssd.domain["local_auth_policy"] = "only"
+    client.sssd.domain["local_auth_policy"] = "only"
 
     client.sssd.start()
 
@@ -411,3 +412,83 @@ def test_passkey__su_same_key_for_multi_user(
             ioctl=f"{moduledatadir}/umockdev.ioctl",
             script=f"{testdatadir}/umockdev.script.{suffix}.{user}",
         )
+
+
+@pytest.mark.importance("high")
+@pytest.mark.ticket(jira="SSSD-7011", gh=7066)
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+@pytest.mark.topology(KnownTopology.LDAP)
+@pytest.mark.builtwith(client="passkey", provider="passkey")
+def test_passkey__check_passkey_mapping_token_as_ssh_key_only(
+    client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
+):
+    """
+    :title: Check passkey mapping with invalid ssh key with AD, Samba, and LDAP server.
+    :setup:
+        1. Add a users in AD, Samba and LDAP server and add ssh key as a passkey mapping.
+        2. Setup SSSD client with FIDO, start SSSD service.
+    :steps:
+        1. Check su non-passkey authentication of the user.
+        2. Required error message in pam log.
+    :expectedresults:
+        1. su authenticates the user with correct password.
+        2. Get the expected message in pam log.
+    :customerscenario: False
+    """
+    client.sssd.domain["local_auth_policy"] = "enable:passkey"
+
+    with open(f"{testdatadir}/ssh-key") as f:
+        provider.user("user1").add().passkey_add(f.read().strip())
+
+    client.sssd.start()
+
+    # We are running simple su not to check authentication with passkey but just to get
+    # expected log message.
+    assert client.auth.su.password("user1", "Secret123"), "Password authentication with correct password is failed"
+
+    pam_log = client.fs.read(client.sssd.logs.pam)
+    assert "Mapping data found is not passkey related" in pam_log, "String was not found in the logs"
+
+
+@pytest.mark.importance("high")
+@pytest.mark.ticket(jira="SSSD-7011", gh=7066)
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+@pytest.mark.topology(KnownTopology.LDAP)
+@pytest.mark.builtwith(client="passkey", provider="passkey")
+def test_passkey__su_user_when_add_with_ssh_key_and_mapping(
+    client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
+):
+    """
+    :title: Check authentication of user when ssh key and valid passkey mapping added with AD, Samba, and LDAP server.
+    :setup:
+        1. Add a users in AD, Samba and LDAP server and add ssh key and a passkey mapping.
+        2. Setup SSSD client with FIDO, start SSSD service.
+    :steps:
+        1. Check su passkey authentication of the user.
+        2. Required error message in pam log.
+    :expectedresults:
+        1. su authenticates the user successfully.
+        2. Get the expected message in pam log.
+    :customerscenario: False
+    """
+    suffix = type(provider).__name__.lower()
+
+    client.sssd.domain["local_auth_policy"] = "enable:passkey"
+
+    user_add = provider.user("user1").add()
+    for mapping in ["ssh-key", f"passkey-mapping.{suffix}"]:
+        with open(f"{testdatadir}/{mapping}") as f:
+            user_add.passkey_add(f.read().strip())
+
+    client.sssd.start()
+
+    assert client.auth.su.passkey(
+        username="user1",
+        pin=123456,
+        device=f"{moduledatadir}/umockdev.device",
+        ioctl=f"{moduledatadir}/umockdev.ioctl",
+        script=f"{testdatadir}/umockdev.script.{suffix}",
+    )
+
+    pam_log = client.fs.read(client.sssd.logs.pam)
+    assert "Mapping data found is not passkey related" in pam_log, "String was not found in the logs"

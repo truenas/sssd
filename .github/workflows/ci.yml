@@ -45,7 +45,7 @@ jobs:
         source ../contrib/fedora/bashrc_sssd
         make distcheck
 
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       if: always()
       with:
         name: build
@@ -115,7 +115,7 @@ jobs:
 
     - name: Upload main artifacts
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         if-no-files-found: ignore
         name: ${{ matrix.tag }}-intgcheck
@@ -128,7 +128,7 @@ jobs:
 
     - name: Upload valgrind artifacts
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         if-no-files-found: ignore
         name: ${{ matrix.tag }}-intgcheck-valgrind
@@ -215,7 +215,7 @@ jobs:
         pip3 install -r ./sssd/src/tests/multihost/requirements.txt
 
     - name: Create multihost configuration
-      uses: DamianReeves/write-file-action@0a7fcbe1960c53fc08fe789fa4850d24885f4d84
+      uses: DamianReeves/write-file-action@6929a9a6d1807689191dcc8bbe62b54d70a32b42
       with:
         path: mhc.yml
         write-mode: overwrite
@@ -234,11 +234,12 @@ jobs:
         set -ex -o pipefail
 
         source .venv/bin/activate
+        export PYTHONPATH="${PYTHONPATH}:$(realpath ./sssd/src/tests/multihost)"
         pytest -s --multihost-config=./mhc.yml ./sssd/src/tests/multihost/basic |& tee multihost-pytest.log
 
     - name: Upload artifacts
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         if-no-files-found: ignore
         name: ${{ matrix.tag }}-multihost
@@ -377,7 +378,7 @@ jobs:
           --mh-config=./mhc.yaml \
           --mh-log-path=$GITHUB_WORKSPACE/mh.log \
           --mh-artifacts-dir=$GITHUB_WORKSPACE/artifacts \
-          --polarion-config=./polarion.yaml \
+          --polarion-config=../polarion.yaml \
           --output-polarion-testcase=$GITHUB_WORKSPACE/artifacts/testcase.xml \
           --collect-only . |& tee $GITHUB_WORKSPACE/pytest-collect.log
 
@@ -394,14 +395,14 @@ jobs:
           --mh-config=./mhc.yaml \
           --mh-log-path=$GITHUB_WORKSPACE/mh.log \
           --mh-artifacts-dir=$GITHUB_WORKSPACE/artifacts \
-          --polarion-config=./polarion.yaml \
+          --polarion-config=../polarion.yaml \
           --output-polarion-testcase=$GITHUB_WORKSPACE/artifacts/testcase.xml \
           --output-polarion-testrun=$GITHUB_WORKSPACE/artifacts/testrun.xml \
           -vvv . |& tee $GITHUB_WORKSPACE/pytest.log
 
     - name: Upload artifacts
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         if-no-files-found: ignore
         name: ${{ matrix.tag }}-system

@@ -93,7 +93,17 @@ struct pam_auth_req {
     struct ldb_message *user_obj;
     struct cert_auth_info *cert_list;
     struct cert_auth_info *current_cert;
+    /* Switched to 'true' if the backend indicates that it cannot handle
+     * Smartcard authentication, but Smartcard authentication is
+     * possible and local Smartcard authentication is allowed. */
     bool cert_auth_local;
+    /* Switched to 'true' if authentication (not pre-authentication) was
+     * started without a login name and the name had to be lookup up with the
+     * certificate used for authentication. Since reading the certificate from
+     * the Smartcard already involves the PIN validation in this case there
+     * would be no need for an additional Smartcard interaction if only local
+     * Smartcard authentication is possible. */
+    bool initial_cert_auth_successful;
 
     bool passkey_data_exists;
     uint32_t client_id_num;
@@ -104,6 +114,7 @@ struct pam_resp_auth_type {
     bool otp_auth;
     bool cert_auth;
     bool passkey_auth;
+    bool backend_returned_no_auth_type;
 };
 
 struct sss_cmd_table *get_pam_cmds(void);

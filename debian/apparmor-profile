@@ -9,6 +9,7 @@
   capability chown,
   capability dac_override,
   capability dac_read_search,
+  capability net_admin,
   capability setgid,
   capability setuid,
   capability sys_admin,
@@ -18,12 +19,15 @@
   @{PROC} r,
   @{PROC}/[0-9]*/net/psched r,
   @{PROC}/[0-9]*/status r,
+  @{PROC}/[0-9]*/cmdline r,
 
   /etc/krb5.keytab k,
   /etc/ldap/ldap.conf r,
   /etc/libnl-3/classid r,
   /etc/localtime r,
+  /etc/nscd.conf r,
   /etc/shells r,
+  /etc/ssl/openssl.cnf r,
   /etc/sssd/sssd.conf r,
   /etc/sssd/conf.d/ r,
   /etc/sssd/conf.d/** r,
@@ -53,6 +57,8 @@
 
   /{,var/}run/sssd.pid rw,
   /{,var/}run/systemd/notify w,
+  /{,var/}run/sssd-cache/db/* rwk,
+  /{,var/}run/sssd-cache/mc/* rwk,
 
   # Site-specific additions and overrides. See local/README for details.
   #include <local/usr.sbin.sssd>

@@ -1,0 +1,74 @@
+#!/usr/bin/expect
+
+set timeout 10
+set user [lindex $argv 0]
+set password [lindex $argv 1]
+set principal [lindex $argv 2]
+
+set distribution [exec "lsb_release" "-is"]
+
+if { $distribution == "Ubuntu" } {
+    set welcome "Welcome to"
+} elseif { $distribution == "Debian" } {
+    set welcome "Debian GNU/Linux comes"
+} else {
+    puts "Unsupported linux distribution $distribution"
+    exit 1
+}
+
+spawn login
+expect "login:"
+send "$user\r"
+expect "Password:"
+send "$password\r"
+expect {
+  timeout
+  {
+    puts "Expect error: timeout after password\r\r"
+    exit 1
+  }
+  "Login incorrect"
+  {
+    puts "Expect error: incorrect credentials\r\r"
+    exit 1
+  }
+  "$welcome"
+}
+expect {
+  timeout
+  {
+    puts "Expect error: timeout waiting for prompt\r\r"
+    exit 1
+  }
+  "$ "
+}
+send "id -un\r"
+expect {
+  timeout
+  {
+    puts "Expect error: timeout waiting for 'id' result\r\r"
+    exit 1
+  }
+  "$user"
+}
+expect {
+  timeout
+  {
+    puts "Expect error: timeout waiting for prompt\r\r"
+    exit 1
+  }
+  "$ "
+}
+if { $principal != "" } {
+  send "klist\r"
+  expect {
+    timeout
+    {
+      puts "Expect error: timeout waiting for klist output\r\r"
+      exit 1
+    }
+    "Default principal: $principal"
+  }
+}
+send "logout\r"
+exit 0

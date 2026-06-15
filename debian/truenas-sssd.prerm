@@ -1,0 +1,21 @@
+#! /bin/sh -e
+
+invoke_failure() {
+    # invoke-rc.d failed
+    return
+}
+
+#DEBHELPER#
+
+# libpam-sss.prerm
+#! /bin/sh -e
+
+
+if [ "$1" = remove ] && [ "${DPKG_MAINTSCRIPT_PACKAGE_REFCOUNT:-1}" = 1 ]; then
+    pam-auth-update --package --remove \
+        sss \
+        sss-smart-card-optional \
+        sss-smart-card-required
+fi
+
+#DEBHELPER#

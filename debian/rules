@@ -1,0 +1,126 @@
+#!/usr/bin/make -f
+%:
+	dh $@ --with python3 \
+		--builddirectory=build
+
+export DEB_BUILD_MAINT_OPTIONS = optimize=-lto
+
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/buildflags.mk
+
+CFLAGS = $(shell dpkg-buildflags --get CFLAGS)
+CFLAGS += -I/usr/include/samba-4.0
+
+export CK_DEFAULT_TIMEOUT=30
+export am_cv_python_pythondir=/usr/lib/python3/dist-packages
+export am_cv_python_pyexecdir=/usr/lib/python3/dist-packages
+export systemdsystemunitdir=$(shell pkgconf --variable=systemdsystemunitdir systemd | sed s,^/,,)
+
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+
+APIDOCDIR = /usr/share/sssd
+DISTRIBUTION = $(shell lsb_release -i | sed 's/.*:\t//')
+PKGDATE = $(shell dpkg-parsechangelog | \
+	awk -F" " '/^Date/ { print $$4 "/" $$3 "/" $$5 }' | \
+	sed 's/Jan/01/;s/Feb/02/;s/Mar/03/;s/Apr/04/;s/May/05/;s/Jun/06/;s/Jul/07/;s/Aug/08/;s/Sep/09/;s/Oct/10/;s/Nov/11/;s/Dec/12/;s/\//\\\//g')
+CURDATE = $(shell date +%m/%d/%Y | sed 's/\//\\\//g')
+export CK_VERBOSITY=verbose
+
+override_dh_auto_configure:
+	dh_auto_configure -- --enable-krb5-locator-plugin \
+	--datadir=/usr/share/ \
+	--with-environment-file=/etc/default/sssd \
+	--with-krb5-plugin-path=/usr/lib/$(DEB_HOST_MULTIARCH)/krb5/plugins/libkrb5 \
+	--enable-nsslibdir=/usr/lib/$(DEB_HOST_MULTIARCH) \
+	--enable-pammoddir=/usr/lib/$(DEB_HOST_MULTIARCH)/security \
+	--enable-systemtap \
+	--with-db-path=/var/run/sssd-cache/db \
+	--with-mcache-path=/var/run/sssd-cache/mc \
+	--with-secrets-db-path=/var/db/system/sssd/secrets \
+	--disable-static \
+	--disable-rpath \
+	--with-autofs \
+	--with-crypto=libcrypto \
+	--with-ssh \
+	--with-initscript=systemd \
+	--with-systemdunitdir=/$(systemdsystemunitdir) \
+	--with-smb-idmap-interface-version=6 \
+	--without-python2-bindings \
+	--with-syslog=journald \
+	--with-pid-path=/run \
+	--with-sssd-user=root \
+	--without-sudo \
+	--with-subid \
+	--with-passkey
+
+override_dh_auto_test:
+ifeq ($(filter nocheck,$(DEB_BUILD_OPTIONS)),)
+	export CK_TIMEOUT_MULTIPLIER=10
+	dh_auto_test -- VERBOSE=yes
+	unset CK_TIMEOUT_MULTIPLIER
+endif
+
+override_dh_auto_install:
+	dh_auto_install --max-parallel=1
+
+override_dh_fixperms:
+	dh_fixperms -Xkrb5_child -Xldap_child -Xselinux_child
+
+override_dh_install:
+	mkdir -p $(CURDIR)/debian/tmp/usr/share/pam-configs
+	install -m644 debian/libpam-sss.pam-auth-update \
+		$(CURDIR)/debian/tmp/usr/share/pam-configs/sss
+	install -m644 debian/libpam-sss-smart-card-optional.pam-auth-update \
+		$(CURDIR)/debian/tmp/usr/share/pam-configs/sss-smart-card-optional
+	install -m644 debian/libpam-sss-smart-card-required.pam-auth-update \
+		$(CURDIR)/debian/tmp/usr/share/pam-configs/sss-smart-card-required
+	install -m644 -D $(CURDIR)/debian/apparmor-profile \
+		$(CURDIR)/debian/tmp/etc/apparmor.d/usr.sbin.sssd
+
+	# remove files we don't want to install
+	find $(CURDIR)/debian/tmp/ -name '*.la' -exec rm '{}' ';'
+	find $(CURDIR)/debian/tmp/ -name '*.pyc' -exec rm '{}' ';'
+	# We need to use '+' instead of ';' due to the way 'find' and
+	# 'rm' interact with each other.
+	find $(CURDIR)/debian/tmp/ -name '*.egg-info' -exec rm -r '{}' '+'
+	rm -f $(CURDIR)/debian/tmp/etc/rc.d/init.d/sssd
+
+	# match nn/nn/nnnn, replace with the date from changelog
+	sed -i 's/[0-1][0-9]\/[0-3][0-9]\/[0-9][0-9][0-9][0-9]/${PKGDATE}/g' $(CURDIR)/debian/tmp/usr/share/man/man*/*
+
+	# change the shebang
+	sed -i -e 's:/usr/bin/python:/usr/bin/python3:' $(CURDIR)/debian/tmp/usr/sbin/sss_obfuscate
+
+	mkdir -p debian/tmp/etc/krb5.conf.d
+	# Enable krb5 idp plugins by default (when sssd-idp package is installed)
+	cp debian/tmp/usr/share/sssd/krb5-snippets/sssd_enable_idp \
+		debian/tmp/etc/krb5.conf.d/sssd_enable_idp
+	# Kerberos KCM credential cache by default
+	cp debian/tmp/usr/share/sssd-kcm/kcm_default_ccache \
+		debian/tmp/etc/krb5.conf.d/kcm_default_ccache
+	# krb5 configuration snippet
+	cp debian/tmp/usr/share/sssd/krb5-snippets/enable_sssd_conf_dir \
+		debian/tmp/etc/krb5.conf.d/enable_sssd_conf_dir
+
+	dh_install
+
+override_dh_installman:
+
+override_dh_missing:
+	dh_missing --fail-missing
+
+override_dh_installinit:
+	dh_apparmor -ptruenas-sssd --profile-name=usr.sbin.sssd
+	dh_installinit --name truenas-sssd --error-handler=invoke_failure
+
+override_dh_installdeb:
+	dh_installdeb
+	sed -i 's/@TRIPLET@/${DEB_HOST_MULTIARCH}/' \
+	$(CURDIR)/debian/truenas-sssd/DEBIAN/postinst;
+
+override_dh_auto_clean:
+	dh_auto_clean
+	rm -f $(CURDIR)/po/*.gmo
+	rm -f $(CURDIR)/src/config/*.pyc
+	rm -f $(CURDIR)/po/stamp-po
+	rm -f $(CURDIR)/src/sbus/codegen/__pycache__/*.pyc

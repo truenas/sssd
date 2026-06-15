@@ -1,0 +1,12 @@
+usr/include/ipa_hbac.h
+usr/lib/*/libipa_hbac.so
+usr/lib/*/pkgconfig/ipa_hbac.pc
+usr/include/sss_certmap.h
+usr/lib/*/libsss_certmap.so
+usr/lib/*/pkgconfig/sss_certmap.pc
+usr/include/sss_idmap.h
+usr/lib/*/libsss_idmap.so
+usr/lib/*/pkgconfig/sss_idmap.pc
+usr/include/sss_nss_idmap.h
+usr/lib/*/libsss_nss_idmap.so
+usr/lib/*/pkgconfig/sss_nss_idmap.pc

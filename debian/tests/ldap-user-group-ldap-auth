@@ -1,0 +1,29 @@
+#!/bin/sh
+
+set -ex
+
+. debian/tests/util
+. debian/tests/common-tests
+
+mydomain="example.com"
+myhostname="ldap.${mydomain}"
+mysuffix="dc=example,dc=com"
+admin_dn="cn=admin,${mysuffix}"
+admin_pw="secret"
+ldap_user="testuser1"
+ldap_user_pw="testuser1secret"
+ldap_group="ldapusers"
+
+adjust_hostname "${myhostname}"
+reconfigure_slapd
+generate_certs "${myhostname}"
+enable_ldap_ssl
+populate_ldap_rfc2307
+configure_sssd_ldap_rfc2307
+enable_pam_mkhomedir
+
+# tests begin here
+run_common_tests
+
+echo "The LDAP user can login on a terminal"
+/usr/bin/expect -f debian/tests/login.exp "${ldap_user}" "${ldap_user_pw}"

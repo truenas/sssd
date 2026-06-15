@@ -1,0 +1,28 @@
+#!/bin/sh
+
+run_common_tests() {
+    echo "Assert local user databases do not have our LDAP test data"
+    check_local_user "${ldap_user}"
+    check_local_group "${ldap_user}"
+    check_local_group "${ldap_group}"
+
+    echo "The LDAP user is known to the system via getent"
+    check_getent_user "${ldap_user}"
+
+    echo "The LDAP user's private group is known to the system via getent"
+    check_getent_group "${ldap_user}"
+
+    echo "The LDAP group ${ldap_group} is known to the system via getent"
+    check_getent_group "${ldap_group}"
+
+    echo "The id(1) command can resolve the group membership of the LDAP user"
+    #$ id -Gn testuser1
+    #testuser1 ldapusers
+    output=$(id -Gn ${ldap_user})
+    # XXX couldn't find a better way to make this comparison using just /bin/sh
+    if [ "${output}" != "${ldap_user} ${ldap_group}" ]; then
+        if [ "${output}" != "${ldap_group} ${ldap_user}" ]; then
+            die "Output doesn't match expected group membership: ${output}"
+        fi
+    fi
+}

@@ -1,0 +1,94 @@
+name: Build TrueNAS SSSD (Debian Trixie)
+
+# Builds the truenas-sssd .deb inside a Debian Trixie VM, on top of the TrueNAS
+# dependency stack, in the requested order:
+#
+#   1. truenas/zfs   -- a genuine build-dep of samba (samba build-depends on
+#                       libzfs7-devel / libnvpair3 / libuutil3).
+#   2. truenas/samba -- installed before the sssd build because sssd MUST link
+#                       the ldb/talloc/tevent/tdb that truenas-samba ships, not
+#                       stock Debian's. truenas-samba Provides + Conflicts them.
+#                       (samba itself build-depends on zfs -> step 1.)
+#   3. truenas-sssd  -- this repo. Build-deps resolve the same way as the TrueNAS
+#                       build (no pinning): truenas-samba's Conflicts force sssd's
+#                       libldb-dev/libtalloc-dev/libtevent-dev/libtdb-dev to come
+#                       from truenas-samba's Provides. Built + installed last; a
+#                       read-only assertion fails the run if a Debian lib slips in.
+#
+# The pylibzfs "QEMU VM Tests" workflow is the reference for the VM runner +
+# OpenZFS install pattern. We build on Debian Trixie (the SCALE target distro)
+# rather than the ubuntu-24.04 host runner so the packages link against the
+# correct library versions.
+
+on:
+  push:
+    branches: [ "truenas/2.9-ltm" ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+# Bump IMAGE_VERSION to bust the cloud-image AND dependency-deb caches together
+# (e.g. after the VM kernel changes). The *_BRANCH vars pin the upstream TrueNAS
+# dependency sources that SSSD is built against.
+env:
+  IMAGE_VERSION: v1
+  ZFS_REPO: https://github.com/truenas/zfs.git
+  ZFS_BRANCH: truenas/zfs-2.4-release
+  SAMBA_REPO: https://github.com/truenas/samba.git
+  SAMBA_BRANCH: SCALE-v4-23-stable
+
+jobs:
+  build:
+    name: Debian Trixie deb build (zfs -> samba -> sssd)
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup QEMU
+      timeout-minutes: 10
+      run: bash .github/workflows/scripts/qemu-1-setup.sh
+
+    - name: Resolve dependency commit hashes (cache keys)
+      id: deps
+      run: |
+        echo "zfs=$(git ls-remote "$ZFS_REPO" "refs/heads/$ZFS_BRANCH" | cut -f1)"     >> "$GITHUB_OUTPUT"
+        echo "samba=$(git ls-remote "$SAMBA_REPO" "refs/heads/$SAMBA_BRANCH" | cut -f1)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Debian Trixie cloud image
+      uses: actions/cache@v4
+      with:
+        path: /tmp/qemu-work/debian-trixie.qcow2
+        key: debian-trixie-cloudimage-${{ env.IMAGE_VERSION }}
+
+    - name: Cache OpenZFS debs
+      id: cache-zfs
+      uses: actions/cache@v4
+      with:
+        path: /tmp/zfs-debs
+        key: zfs-debs-trixie-${{ env.IMAGE_VERSION }}-${{ steps.deps.outputs.zfs }}
+
+    - name: Cache TrueNAS Samba debs
+      id: cache-samba
+      uses: actions/cache@v4
+      with:
+        path: /tmp/samba-debs
+        key: samba-debs-trixie-${{ env.IMAGE_VERSION }}-${{ steps.deps.outputs.samba }}
+
+    - name: Start Debian Trixie VM
+      timeout-minutes: 15
+      run: bash .github/workflows/scripts/qemu-2-start.sh
+
+    - name: Build zfs -> samba -> sssd in VM
+      timeout-minutes: 120
+      run: bash .github/workflows/scripts/qemu-3-build.sh
+
+    - name: Upload built SSSD packages
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: truenas-sssd-debs
+        path: /tmp/out/*.deb
+        if-no-files-found: warn

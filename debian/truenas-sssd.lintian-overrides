@@ -1,0 +1,7 @@
+manpage-has-errors-from-man usr/share/man/man5/sssd-ldap.5.*
+lacks-ldconfig-trigger usr/lib/x86_64-linux-gnu/libsubid_sss.so
+shared-library-lacks-version usr/lib/x86_64-linux-gnu/libsubid_sss.so libsubid_sss.so
+# libnss-sss.lintian-overrides
+package-name-doesnt-match-sonames libnss-sss2
+# libipa-hbac0t64.lintian-overrides
+libipa-hbac0t64: package-name-doesnt-match-sonames libipa-hbac0

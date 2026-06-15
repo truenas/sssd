@@ -1,0 +1,19 @@
+# This repo tracks ONLY the Debian packaging, CI workflow, and fetch script.
+# ./fetch.sh populates the tree with upstream SSSD sources (untracked by design).
+/*
+!/.gitignore
+!/fetch.sh
+!/debian
+!/.github
+
+# debhelper build artifacts created under debian/ during a build
+debian/files
+debian/*.substvars
+debian/*.debhelper
+debian/*.debhelper.log
+debian/debhelper-build-stamp
+debian/.debhelper/
+debian/autoreconf.*
+debian/truenas-sssd/
+debian/truenas-sssd-dev/
+debian/tmp/

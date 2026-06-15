@@ -1,0 +1,8 @@
+Name: SSS optional smart card authentication
+Default: no
+Priority: 264
+Conflicts: sss-smart-card-required
+
+Auth-Type: Primary
+Auth:
+	[success=end default=ignore]	pam_sss.so allow_missing_name try_cert_auth

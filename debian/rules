@@ -85,8 +85,14 @@ override_dh_install:
 	find $(CURDIR)/debian/tmp/ -name '*.egg-info' -exec rm -r '{}' '+'
 	rm -f $(CURDIR)/debian/tmp/etc/rc.d/init.d/sssd
 
-	# match nn/nn/nnnn, replace with the date from changelog
-	sed -i 's/[0-1][0-9]\/[0-3][0-9]\/[0-9][0-9][0-9][0-9]/${PKGDATE}/g' $(CURDIR)/debian/tmp/usr/share/man/man*/*
+	# match nn/nn/nnnn, replace with the date from changelog.
+	# Use find rather than a shell glob: if the man directory is missing or
+	# empty (e.g. man pages were not generated), an unmatched glob would be
+	# passed to sed literally and abort the build with a cryptic error.
+	if [ -d $(CURDIR)/debian/tmp/usr/share/man ]; then \
+		find $(CURDIR)/debian/tmp/usr/share/man -type f \
+			-exec sed -i 's/[0-1][0-9]\/[0-3][0-9]\/[0-9][0-9][0-9][0-9]/${PKGDATE}/g' {} +; \
+	fi
 
 	# change the shebang
 	sed -i -e 's:/usr/bin/python:/usr/bin/python3:' $(CURDIR)/debian/tmp/usr/sbin/sss_obfuscate

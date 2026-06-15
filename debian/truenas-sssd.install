@@ -136,13 +136,10 @@ usr/lib/python3/dist-packages/pysss_nss_idmap.so
 # python3-libsss-ibipa-hbac.install
 usr/lib/python3/dist-packages/pyhbac.so
 # libsss-nss-idmap0.install
-usr/lib/*/libsss_nss_idmap.so
 usr/lib/*/libsss_nss_idmap.so.*
 # libsss-idmap0.install
-usr/lib/*/libsss_idmap.so
 usr/lib/*/libsss_idmap.so.*
 # libsss-certmap.install
-usr/lib/*/libsss_certmap.so
 usr/lib/*/libsss_certmap.so.*
 usr/share/man/man5/sss-certmap.5
 # libpam-sss.install
@@ -153,7 +150,6 @@ usr/share/man/man8/pam_sss_gss.8*
 # libnss-sss.install
 usr/lib/*/libnss_sss.so.2
 # libipa-hbac0t64.install
-usr/lib/*/libipa_hbac.so
 usr/lib/*/libipa_hbac.so.*
 # pam
 usr/share/pam-configs/*

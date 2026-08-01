@@ -1071,9 +1071,6 @@ static void convert_time_tz(const char* tz)
     const char *orig_tz = NULL;
 
     orig_tz = getenv("TZ");
-    if (orig_tz == NULL) {
-        orig_tz = "";
-    }
 
     if (tz) {
         ret = setenv("TZ", tz, 1);
@@ -1081,16 +1078,20 @@ static void convert_time_tz(const char* tz)
                 "setenv failed with errno: %d", errno);
     }
 
-    ret = sss_utc_to_time_t("20140801115742Z", "%Y%m%d%H%M%SZ", &unix_time);
+    ret = sss_utc_to_time_t("20250101115742Z", "%Y%m%d%H%M%SZ", &unix_time);
 
     /* restore */
     if (orig_tz != NULL) {
         ret2 = setenv("TZ", orig_tz, 1);
         sss_ck_fail_if_msg(ret2 == -1,
                 "setenv failed with errno: %d", errno);
+    } else {
+        ret2 = unsetenv("TZ");
+        sss_ck_fail_if_msg(ret2 == -1,
+                "unsetenv failed with errno: %d", errno);
     }
-    ck_assert_msg(ret == EOK && difftime(1406894262, unix_time) == 0,
-                "Expecting 1406894262 got: ret[%d] unix_time[%"SPRItime"]",
+    ck_assert_msg(ret == EOK && difftime(1735732662, unix_time) == 0,
+                "Expecting 1735732662 got: ret[%d] unix_time[%"SPRItime"]",
                 ret, unix_time);
 }
 

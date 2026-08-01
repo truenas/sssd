@@ -162,6 +162,45 @@
                 </varlistentry>
 
                 <varlistentry>
+                    <term>ldap_read_rootdse (string)</term>
+                    <listitem>
+                        <para>
+                            SSSD reads RootDSE to get information about LDAP and
+                            its capabilities. By default, this is done
+                            anonymously. However, this may not be permitted by
+                            the LDAP server. In such cases we can use this option
+                            to influence SSSD behavior.
+                        </para>
+                        <para>
+                            Allowed values are:
+                            <itemizedlist>
+                                <listitem>
+                                    <para>
+                                        anonymous
+                                    </para>
+                                </listitem>
+                                <listitem>
+                                    <para>
+                                        authenticated
+                                    </para>
+                                </listitem>
+                                <listitem>
+                                    <para>
+                                        never
+                                    </para>
+                                </listitem>
+                            </itemizedlist>
+                            By default, using the "anonymous" option, SSSD tries
+                            to read RootDSE anonymously. If this fails SSSD
+                            retries the attempt with authentication.
+                        </para>
+                        <para>
+                            Default: anonymous
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
                     <term>ldap_schema (string)</term>
                     <listitem>
                         <para>
@@ -232,6 +271,17 @@
                                     <para>
                                         ldap_modify - Direct modification of
                                         userPassword (not recommended).
+                                    </para>
+                                </listitem>
+                                <listitem>
+                                    <para>
+                                        exop_force - Try Password Modify
+                                        Extended Operation (RFC 3062) even if
+                                        there are no grace logins left.
+                                        Depending on the type and configuration
+                                        of the LDAP server the password change
+                                        might fail because an authenticated bind
+                                        is not possible.
                                     </para>
                                 </listitem>
                             </itemizedlist>
@@ -431,6 +481,21 @@
                         <para>
                             Default: the value of
                             <emphasis>ldap_search_base</emphasis>
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry condition="with_subid">
+                    <term>ldap_subid_ranges_search_base (string)</term>
+                    <listitem>
+                        <para>
+                            Optional. Use the given string as search base for
+                            subordinate ranges related objects.
+                        </para>
+                        <para>
+                            Default: the value of
+                            <emphasis>cn=subids,%basedn</emphasis> for IPA
+                            otherwise <emphasis>ldap_search_base</emphasis>.
                         </para>
                     </listitem>
                 </varlistentry>
@@ -681,13 +746,17 @@
                             Disable Active Directory range retrieval.
                         </para>
                         <para>
-                            Active Directory limits the number of members to be
+                            Active Directory limits the number of members that can be
                             retrieved in a single lookup using the MaxValRange
-                            policy (which defaults to 1500 members). If a group
-                            contains more members, the reply would include an
-                            AD-specific range extension. This option disables
-                            parsing of the range extension, therefore large
-                            groups will appear as having no members.
+                            policy, which defaults to 1500 members. If a group
+                            contains more than 1500 members, the reply includes
+                            an AD-specific range extension. When enabled,
+                            this option prevents SSSD from parsing the range
+                            extension. As a result large groups will appear as they
+                            have no members.
+                            This option does not enable SSSD to read subsequent
+                            ranges. To retrieve all members of a group, you must
+                            increase the MaxValRange setting in Active Directory.
                         </para>
                         <para>
                             Default: False
@@ -856,8 +925,9 @@
                             Certificate Authority certificates in separate
                             individual files. Typically the file names need to
                             be the hash of the certificate followed by '.0'.
-                            If available, <command>cacertdir_rehash</command>
-                            can be used to create the correct names.
+                            If available, <command>openssl rehash</command>
+                            or <command>c_rehash</command> can be used to
+                            create the correct names.
                         </para>
                         <para>
                             Default: use OpenLDAP defaults, typically in
@@ -1284,7 +1354,7 @@ host/*
                             operation.
                         </para>
                         <para>
-                            It is recommend to set this option explicitly if
+                            It is recommended to set this option explicitly if
                             "ldap_pwd_policy = shadow" is used to let SSSD
                             know if the LDAP server will update
                             shadowLastChange LDAP attribute automatically

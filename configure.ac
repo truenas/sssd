@@ -11,7 +11,8 @@ m4_ifdef([AC_USE_SYSTEM_EXTENSIONS],
     [AC_USE_SYSTEM_EXTENSIONS],
     [AC_GNU_SOURCE])
 
-CFLAGS="$CFLAGS -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE"
+my_CFLAGS="-D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE"
+AC_SUBST([my_CFLAGS])
 
 
 AM_INIT_AUTOMAKE([-Wall -Wno-portability foreign subdir-objects tar-pax
@@ -93,7 +94,7 @@ AC_SEARCH_LIBS([timer_create], [rt posix4],
     [AC_DEFINE([HAVE_LIBRT], [1],
          [Define if you have the librt library or equivalent.])
      LIBADD_TIMER="$LIBS"],
-    [AC_MSG_ERROR([unable to find library fot the timer_create() function])])
+    [AC_MSG_ERROR([unable to find library for the timer_create() function])])
 
 AC_SUBST([LIBADD_TIMER])
 LIBS=$SAVE_LIBS
@@ -296,9 +297,9 @@ AS_IF([! $PKG_CONFIG --atleast-version 1.0.0 dbus-1], [
 ])
 
 AS_IF([test x$has_dbus != xno], [
-    SAFE_LIBS="$LIBS"
+    SAVED_LIBS="$LIBS"
     LIBS="$DBUS_LIBS"
-    SAFE_CFLAGS=$CFLAGS
+    SAVED_CFLAGS=$CFLAGS
     CFLAGS="$CFLAGS $DBUS_CFLAGS"
 
     AC_CHECK_FUNC([dbus_watch_get_unix_fd],
@@ -309,8 +310,8 @@ AS_IF([test x$has_dbus != xno], [
                    [],
                    [ #include <dbus/dbus.h> ])
 
-    LIBS="$SAFE_LIBS"
-    CFLAGS=$SAFE_CFLAGS
+    LIBS="$SAVED_LIBS"
+    CFLAGS=$SAVED_CFLAGS
 ])
 
 # work around a bug in cov-build from Coverity
@@ -478,7 +479,7 @@ AS_IF([test x"$sss_cv_attribute_warn_unused_result" = xyes], [
              [whether compiler supports __attribute__((warn_unused_result))])
 ])
 
-SAFE_CFLAGS=$CFLAGS
+SAVED_CFLAGS=$CFLAGS
 CFLAGS="-Werror"
 AC_CACHE_CHECK(
     [whether compiler supports __attribute__((fallthrough))],
@@ -504,7 +505,7 @@ AC_CACHE_CHECK(
              sss_cv_attribute_fallthrough_val="((void)0)"
          ])
     ])
-CFLAGS=$SAFE_CFLAGS
+CFLAGS=$SAVED_CFLAGS
 
 AC_DEFINE_UNQUOTED(
     [SSS_ATTRIBUTE_FALLTHROUGH],

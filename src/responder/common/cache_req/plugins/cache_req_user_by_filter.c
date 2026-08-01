@@ -32,7 +32,7 @@ cache_req_user_by_filter_prepare_domain_data(struct cache_req *cr,
                                              struct sss_domain_info *domain)
 {
     TALLOC_CTX *tmp_ctx;
-    const char *name;
+    char *name;
     errno_t ret;
 
     if (cr->data->name.name == NULL) {
@@ -52,11 +52,7 @@ cache_req_user_by_filter_prepare_domain_data(struct cache_req *cr,
         goto done;
     }
 
-    name = sss_reverse_replace_space(tmp_ctx, name, cr->rctx->override_space);
-    if (name == NULL) {
-        ret = ENOMEM;
-        goto done;
-    }
+    sss_reverse_replace_space_inplace(name, cr->rctx->override_space);
 
     talloc_zfree(data->name.lookup);
     data->name.lookup = talloc_steal(data, name);
@@ -94,7 +90,7 @@ cache_req_user_by_filter_lookup(TALLOC_CTX *mem_ctx,
      * Neither it is possible to use it when asking for a non-"name" attribute
      * as it could not be present in the timestamp cache.
      */
-    if (is_files_provider(domain) || data->name.attr != NULL) {
+    if (is_files_provider(domain) || strcmp(attr, SYSDB_NAME) != 0) {
         recent_filter = NULL;
     } else {
         recent_filter = talloc_asprintf(mem_ctx, "(%s>=%"SPRItime")", SYSDB_LAST_UPDATE,

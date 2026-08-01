@@ -308,6 +308,8 @@ struct tevent_req *groups_by_user_send(TALLOC_CTX *memctx,
                                        const char *filter_value,
                                        int filter_type,
                                        const char *extra_value,
+                                       struct sdap_attr_map *user_map,
+                                       size_t user_map_cnt,
                                        bool noexist_delete,
                                        bool set_non_posix);
 
@@ -477,8 +479,7 @@ struct tevent_req *subid_ranges_get_send(TALLOC_CTX *memctx,
                                          struct sdap_id_ctx *ctx,
                                          struct sdap_domain *sdom,
                                          struct sdap_id_conn_ctx *conn,
-                                         const char* filter_value,
-                                         const char *extra_value);
+                                         const char* filter_value);
 
 int subid_ranges_get_recv(struct tevent_req *req, int *dp_error_out,
                           int *sdap_ret);

@@ -18,6 +18,8 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "config.h"
+
 #include <errno.h>
 #include <stdlib.h>
 #include <stdatomic.h>
@@ -65,7 +67,11 @@ struct automtent {
     size_t cursor;
 };
 
-static struct sss_getautomntent_data {
+static
+#ifdef HAVE_PTHREAD_EXT
+__thread
+#endif
+struct sss_getautomntent_data {
     char *mapname;
     size_t len;
     size_t ptr;

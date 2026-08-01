@@ -16,7 +16,6 @@ import pexpect.pxssh
 import pytest
 from sssd.testlib.common.utils import sssdTools
 from sssd.testlib.common.exceptions import SSSDException
-from sssd.testlib.common.ssh2_python import run_command_client
 
 
 @pytest.mark.usefixtures('default_ipa_users', 'reset_password')
@@ -215,6 +214,10 @@ class Testipabz(object):
         :requirement: dyndns
         :bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1884301
         """
+        arch = multihost.client[0].run_command(
+            'uname -m', raiseonerr=False).stdout_text
+        if 'x86_64' not in arch:
+            pytest.skip("Test is not stable on other architectures.")
         client = sssdTools(multihost.client[0])
         client_hostname = multihost.client[0].sys_hostname
         server_hostname = multihost.master[0].sys_hostname
@@ -331,7 +334,8 @@ class Testipabz(object):
         multihost.client[0].run_command(
             f'su -l {user} -c "ipa sudorule-add-user testrule2 --users admin"',
             raiseonerr=False)
-        run_command_client(multihost, user, test_password, "sudo -l")
+        time.sleep(5)
+        multihost.client[0].run_command(f'su -l {user} -c "sudo -l"')
         time.sleep(3)
         search = multihost.client[0].run_command(
             'fgrep gssapi_ /var/log/sssd/sssd_pam.log | tail -10')
@@ -343,8 +347,7 @@ class Testipabz(object):
         multihost.client[0].run_command(
             f'su -l {user} -c "kinit admin"', stdin_text=test_password,
             raiseonerr=False)
-        run_command_client(multihost, user, test_password, "sudo -l")
-
+        multihost.client[0].run_command(f'su -l {user} -c "sudo -l"')
         multihost.client[0].run_command(
             f'su -l {user} -c "klist"', raiseonerr=False)
         multihost.client[0].run_command(
@@ -419,9 +422,10 @@ class Testipabz(object):
         multihost.client[0].run_command(
             f'su -l {user} -c "sudo -S -l"', stdin_text=test_password,
             raiseonerr=False)
-        result = run_command_client(multihost, user, test_password,
-                                    'echo -e "Secret123" | sudo -S /usr/sbin/sssctl domain-list')
-        assert domain_name in result
+        result = multihost.client[0].run_command(
+            f'su -l {user} -c "echo -e \"Secret123\" | sudo -S /usr/sbin/sssctl domain-list"'
+        )
+        assert domain_name in result.stdout_text
 
     @staticmethod
     def test_ssh_hash_knownhosts(multihost, reset_password, backupsssdconf):
@@ -453,6 +457,12 @@ class Testipabz(object):
             6. Hostnames should be hashed/unhashed as per the value of
                ssh_hash_known_hosts
         """
+        file_status = multihost.client[0].run_command(
+            "test -f /var/lib/sss/pubconf/known_hosts", raiseonerr=False
+        )
+        if file_status.returncode != 0:
+            pytest.skip("Sssd switched from sss_ssh_knownhostsproxy to sss_ssh_knownhosts")
+
         tools = sssdTools(multihost.client[0])
         server_host = multihost.master[0].sys_hostname
 
@@ -596,7 +606,7 @@ class Testipabz(object):
 
         # Test result evaluation
         assert ssh_cmd.returncode == 0, "Ssh login failed."
-        assert "Your password will expire in " in ssh_cmd.stdout_text,\
+        assert "Your password will expire in " in ssh_cmd.stdout_text, \
             "The password expiration notice was not shown."
 
     @staticmethod

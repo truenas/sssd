@@ -253,6 +253,7 @@ done:
 
 struct cli_opts {
     const char *opt_logger;
+    int backtrace;
     const char *issuer_url;
     const char *client_id;
     const char *device_auth_endpoint;
@@ -274,6 +275,7 @@ static int parse_cli(int argc, const char *argv[], struct cli_opts *opts)
     poptContext pc;
     int opt;
     errno_t ret;
+    int backtrace = 1;
     int debug_fd = -1;
     const char *opt_logger = NULL;
     bool print_usage = true;
@@ -281,6 +283,8 @@ static int parse_cli(int argc, const char *argv[], struct cli_opts *opts)
     struct poptOption long_options[] = {
         POPT_AUTOHELP
         SSSD_DEBUG_OPTS
+        {"backtrace", 0, POPT_ARG_INT, &backtrace, 0,
+         _("Enable debug backtrace"), NULL },
         {"debug-fd", 0, POPT_ARG_INT, &debug_fd, 0,
          _("An open file descriptor for the debug logs"), NULL},
         {"get-device-code", 0, POPT_ARG_NONE, NULL, 'a',
@@ -398,6 +402,7 @@ static int parse_cli(int argc, const char *argv[], struct cli_opts *opts)
     }
 
     opts->opt_logger = opt_logger;
+    opts->backtrace = backtrace;
 
     if (debug_fd != -1) {
         opts->opt_logger = sss_logger_str[FILES_LOGGER];
@@ -488,6 +493,7 @@ int main(int argc, const char *argv[])
     }
 
     DEBUG_INIT(debug_level, opts.opt_logger);
+    sss_set_debug_backtrace_enable((opts.backtrace == 0) ? false : true);
 
     DEBUG(SSSDBG_TRACE_FUNC, "oidc_child started.\n");
 
@@ -586,7 +592,7 @@ int main(int argc, const char *argv[])
         DEBUG(SSSDBG_TRACE_ALL, "id_token: [%s].\n", dc_ctx->td->id_token_str);
 
         if (dc_ctx->jwks_uri != NULL) {
-            ret = verify_token(dc_ctx);
+            ret = decode_token(dc_ctx, true);
             if (ret != EOK) {
                 DEBUG(SSSDBG_OP_FAILURE, "Failed to verify tokens.\n");
                 goto done;
@@ -610,7 +616,41 @@ int main(int argc, const char *argv[])
         trace_tokens(dc_ctx);
 
         user_identifier = get_user_identifier(dc_ctx, dc_ctx->td->userinfo,
-                                              opts.user_identifier_attr);
+                                              opts.user_identifier_attr,
+                                              NULL);
+        if (user_identifier == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "User identifier not found in user info data, "
+                  "checking id token.\n");
+
+            if (dc_ctx->jwks_uri == NULL) {
+                /* Up to here the tokens are only decoded into JSON if
+                 * verification keys were provided. */
+                ret = decode_token(dc_ctx, false);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE, "Failed to decode tokens, ignored.\n");
+                }
+            }
+
+            if (dc_ctx->td->id_token_payload != NULL) {
+                user_identifier = get_user_identifier(dc_ctx, dc_ctx->td->id_token_payload,
+                                                      opts.user_identifier_attr,
+                                                      "id token");
+            }
+        }
+
+        if (user_identifier == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "User identifier not found in user info data or id token, "
+                  "checking access token.\n");
+
+            if (dc_ctx->td->access_token_payload != NULL) {
+                user_identifier = get_user_identifier(dc_ctx, dc_ctx->td->access_token_payload,
+                                                      opts.user_identifier_attr,
+                                                      "access token");
+            }
+        }
+
         if (user_identifier == NULL) {
             DEBUG(SSSDBG_OP_FAILURE, "Failed to get user identifier.\n");
             goto done;

@@ -20,7 +20,9 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include <time.h>
 #include <string.h>
@@ -210,6 +212,7 @@ static int extract_authtok_v2(struct sss_auth_token *tok,
     case SSS_AUTHTOK_TYPE_PASSKEY:
     case SSS_AUTHTOK_TYPE_PASSKEY_KRB:
     case SSS_AUTHTOK_TYPE_PASSKEY_REPLY:
+    case SSS_AUTHTOK_TYPE_PAM_STACKED:
         ret = sss_authtok_set(tok, auth_token_type,
                               auth_token_data, auth_token_length);
         break;
@@ -554,9 +557,22 @@ static errno_t set_local_auth_type(struct pam_auth_req *preq,
         goto fail;
     }
 
-    ret = sysdb_attrs_add_bool(attrs, SYSDB_LOCAL_SMARTCARD_AUTH, sc_allow);
-    if (ret != EOK) {
-        goto fail;
+    if (sc_allow) {
+        /* Only set SYSDB_LOCAL_SMARTCARD_AUTH to 'true' but never to
+         * 'false'. The krb5 backend will only returns that Smartcard
+         * authentication is available if a Smartcard is present. That means
+         * if the user authenticates with a different method and a Smartcard
+         * is not present at this time 'sc_allow' will be 'false' and might
+         * overwrite a 'true' value written during a previous authentication
+         * attempt where a Smartcard was present. To avoid this we only write
+         * 'true' values. Since the default if SYSDB_LOCAL_SMARTCARD_AUTH is
+         * missing is 'false' local Smartcard authentication (offline) will
+         * still only be enabled if online Smartcard authentication was
+         * detected. */
+        ret = sysdb_attrs_add_bool(attrs, SYSDB_LOCAL_SMARTCARD_AUTH, sc_allow);
+        if (ret != EOK) {
+            goto fail;
+        }
     }
 
     ret = sysdb_attrs_add_bool(attrs, SYSDB_LOCAL_PASSKEY_AUTH, passkey_allow);
@@ -1087,6 +1103,7 @@ static errno_t get_password_for_cache_auth(struct sss_auth_token *authtok,
 
     switch (sss_authtok_get_type(authtok)) {
     case SSS_AUTHTOK_TYPE_PASSWORD:
+    case SSS_AUTHTOK_TYPE_PAM_STACKED:
         ret = sss_authtok_get_password(authtok, password, NULL);
         break;
     case SSS_AUTHTOK_TYPE_2FA:
@@ -1216,6 +1233,7 @@ void pam_reply(struct pam_auth_req *preq)
     bool local_passkey_auth_allow = false;
 #ifdef BUILD_PASSKEY
     bool pk_preauth_done = false;
+    bool pk_kerberos = false;
 #endif /* BUILD_PASSKEY */
 
     pd = preq->pd;
@@ -1499,7 +1517,8 @@ void pam_reply(struct pam_auth_req *preq)
         }
 
 #ifdef BUILD_PASSKEY
-        ret = pam_eval_passkey_response(pctx, pd, preq, &pk_preauth_done);
+        ret = pam_eval_passkey_response(pctx, pd, preq, &pk_preauth_done,
+                                        &pk_kerberos);
         if (ret != EOK) {
             DEBUG(SSSDBG_OP_FAILURE, "Failed to eval passkey response\n");
             goto done;
@@ -1507,6 +1526,7 @@ void pam_reply(struct pam_auth_req *preq)
 
         if (may_do_passkey_auth(pctx, pd)
             && !pk_preauth_done
+            && !pk_kerberos
             && preq->passkey_data_exists
             && local_passkey_auth_allow) {
             ret = passkey_local(cctx, cctx->ev, pctx, preq, pd);

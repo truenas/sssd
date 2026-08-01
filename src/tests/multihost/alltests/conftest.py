@@ -1187,46 +1187,18 @@ def write_journalsssd(session_multihost, request):
     contents = "DEBUG_LOGGER=--logger=journald"
     session_multihost.client[0].put_file_contents('/etc/sysconfig/sssd',
                                                   contents)
-    start_journald = 'systemctl start systemd-journald'
-    session_multihost.client[0].run_command(start_journald)
+    restart_journald = 'systemctl restart systemd-journald'
+    session_multihost.client[0].run_command(restart_journald)
 
     def remove_journalsssd():
         """ Remove  /etc/sysconfig/sssd"""
         cmd = 'rm -f /etc/sysconfig/sssd'
-        stop_journald = 'systemctl stop systemd-journald'
+        restart_journald = 'systemctl restart systemd-journald'
         restart_sssd = 'systemctl restart sssd'
         session_multihost.client[0].run_command(cmd)
-        session_multihost.client[0].run_command(stop_journald)
+        session_multihost.client[0].run_command(restart_journald)
         session_multihost.client[0].run_command(restart_sssd)
     request.addfinalizer(remove_journalsssd)
-
-
-@pytest.fixture(scope='class')
-def update_journald_conf(session_multihost, request):
-    """
-    Update /etc/systemd/journald.conf
-    To turn off any kind of rate limiting, set RateLimitIntervalSec value to 0.
-    """
-    bkup_cmd = 'cp -f /etc/systemd/journald.conf ' \
-               '/etc/systemd/journald.conf.bkup'
-    session_multihost.client[0].run_command(bkup_cmd, raiseonerr=False)
-    up_ratelimit = 'RateLimitIntervalSec=0'
-    journald_conf = session_multihost.client[0].get_file_contents(
-        '/etc/systemd/journald.conf')
-    if isinstance(journald_conf, bytes):
-        contents = journald_conf.decode('utf-8')
-    else:
-        contents = journald_conf
-    contents = contents.replace(up_ratelimit, '') + up_ratelimit
-    session_multihost.client[0].put_file_contents('/etc/systemd/journald.conf',
-                                                  contents)
-
-    def restore_journalsssd():
-        """ Restore journalsssd.conf """
-        bkup_cmd = 'cp -f /etc/systemd/journald.conf.bkup ' \
-                   '/etc/systemd/journald.conf'
-        session_multihost.client[0].run_command(bkup_cmd)
-    request.addfinalizer(restore_journalsssd)
 
 
 @pytest.fixture(scope="class")

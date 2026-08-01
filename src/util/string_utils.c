@@ -22,12 +22,20 @@
 
 #include "util/util.h"
 
+static inline void replace_char_inplace(char *p, char match, char sub)
+{
+    for (; *p != '\0'; ++p) {
+        if (*p == match) {
+            *p = sub;
+        }
+    }
+}
+
 char *sss_replace_char(TALLOC_CTX *mem_ctx,
                        const char *in,
                        const char match,
                        const char sub)
 {
-    char *p;
     char *out;
 
     out = talloc_strdup(mem_ctx, in);
@@ -35,21 +43,16 @@ char *sss_replace_char(TALLOC_CTX *mem_ctx,
         return NULL;
     }
 
-    for (p = out; *p != '\0'; ++p) {
-        if (*p == match) {
-            *p = sub;
-        }
-    }
+    replace_char_inplace(out, match, sub);
 
     return out;
 }
 
-char * sss_replace_space(TALLOC_CTX *mem_ctx,
-                         const char *orig_name,
-                         const char subst)
+void sss_replace_space_inplace(char *orig_name,
+                               const char subst)
 {
     if (subst == '\0' || subst == ' ') {
-        return talloc_strdup(mem_ctx, orig_name);
+        return;
     }
 
     if (strchr(orig_name, subst) != NULL) {
@@ -60,28 +63,27 @@ char * sss_replace_space(TALLOC_CTX *mem_ctx,
                 "Name [%s] already contains replacement character [%c]. " \
                 "No replacement will be done.\n",
                 orig_name, subst);
-        return talloc_strdup(mem_ctx, orig_name);
+        return;
     }
 
-    return sss_replace_char(mem_ctx, orig_name, ' ', subst);
+    replace_char_inplace(orig_name, ' ', subst);
 }
 
-char * sss_reverse_replace_space(TALLOC_CTX *mem_ctx,
-                                 const char *orig_name,
-                                 const char subst)
+void sss_reverse_replace_space_inplace(char *orig_name,
+                                       const char subst)
 {
     if (subst == '\0' || subst == ' ') {
-        return talloc_strdup(mem_ctx, orig_name);
+        return;
     }
 
     if (strchr(orig_name, subst) != NULL && strchr(orig_name, ' ') != NULL) {
         DEBUG(SSSDBG_TRACE_FUNC,
               "Input [%s] contains replacement character [%c] and space.\n",
               orig_name, subst);
-        return talloc_strdup(mem_ctx, orig_name);
+        return;
     }
 
-    return sss_replace_char(mem_ctx, orig_name, subst, ' ');
+    replace_char_inplace(orig_name, subst, ' ');
 }
 
 errno_t guid_blob_to_string_buf(const uint8_t *blob, char *str_buf,
@@ -124,6 +126,59 @@ const char *get_last_x_chars(const char *str, size_t x)
     }
 
     return (str + len - x);
+}
+
+errno_t string_begins_with(const char *str,
+                           const char *prefix,
+                           bool *_result)
+{
+    size_t len;
+    size_t prefix_len;
+
+    *_result = false;
+
+    if (str == NULL) {
+        return EINVAL;
+    }
+
+    len = strlen(str);
+    prefix_len = strlen(prefix);
+
+    if (prefix_len > len) {
+        return EINVAL;
+    }
+
+    *_result = strncmp(prefix, str, prefix_len) == 0;
+
+    return EOK;
+}
+
+errno_t string_ends_with(const char *str,
+                         const char *suffix,
+                         bool *_result)
+{
+    int res;
+    size_t len;
+    size_t suffix_len;
+
+    *_result = false;
+
+    if (str == NULL) {
+        return EINVAL;
+    }
+
+    len = strlen(str);
+    suffix_len = strlen(suffix);
+
+    if (suffix_len > len) {
+        return EINVAL;
+    }
+
+    res = strcmp(str + (len - suffix_len), suffix);
+
+    *_result = !res;
+
+    return EOK;
 }
 
 char **concatenate_string_array(TALLOC_CTX *mem_ctx,

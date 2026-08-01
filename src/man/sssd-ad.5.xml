@@ -258,12 +258,13 @@ ad_enabled_domains = sales.example.com, eng.example.com
                     <term>ad_access_filter (string)</term>
                     <listitem>
                         <para>
-                            This option specifies LDAP access control
-                            filter that the user must match in order
-                            to be allowed access. Please note that the
-                            <quote>access_provider</quote> option must be
-                            explicitly set to <quote>ad</quote> in order
-                            for this option to have an effect.
+                            Specifies an LDAP access control filter that a user
+                            must match to gain access. The <quote>access_provider</quote>
+                            option must be explicitly set to <quote>ad</quote>
+                            for this option to take effect. If you want to use the
+                            <quote>ad_access_filter</quote> as the only access control
+                            scheme, you must disable GPO based access control
+                            (see option <quote>ad_gpo_access_control</quote> for details).
                         </para>
                         <para>
                             The option also supports specifying different
@@ -1223,15 +1224,16 @@ ad_gpo_map_deny = +my_pam_service
                             Optional. Applicable only when dyndns_update
                             is true. Choose the interface or a list of interfaces
                             whose IP addresses should be used for dynamic DNS
-                            updates. Special value <quote>*</quote> implies that
-                            IPs from all interfaces should be used.
+                            updates. The name of interface can be a wildcard
+                            pattern. See <emphasis>man 7 glob</emphasis> for
+                            details about patterns.
                         </para>
                         <para>
                             Default: Use the IP addresses of the interface which
                             is used for AD LDAP connection
                         </para>
                         <para>
-                            Example: dyndns_iface = em1, vnet1, vnet2
+                            Example: dyndns_iface = em1, vnet?, vpn*
                         </para>
                     </listitem>
                 </varlistentry>
@@ -1327,12 +1329,26 @@ ad_gpo_map_deny = +my_pam_service
                         <para>
                             Setting this option makes sense for environments
                             where the DNS server is different from the identity
-                            server.
+                            server or when we use encrypted DNS.
+                        </para>
+                        <para>
+                           The parameter can be a simple string containing
+                           DNS name or IP address. It can also be an URI.
+                           The URI can look like
+                           <emphasis>dns://servername/</emphasis> or
+                           <emphasis>dns+tls://1.2.3.4:853#servername/</emphasis>.
+                        </para>
+                        <para>
+                            The second example enables DNS-over-TLS protocol for
+                            DNS updates. The nsupdate utility must support DoT -
+                            check the <emphasis>man nsupdate</emphasis> before
+                            enabling it in SSSD.
                         </para>
                         <para>
                             Please note that this option will be only used in
                             fallback attempt when previous attempt using
-                            autodetected settings failed.
+                            autodetected settings failed or when DNS-over-TLS
+                            is enabled.
                         </para>
                         <para>
                             Default: None (let nsupdate choose the server)
@@ -1351,6 +1367,56 @@ ad_gpo_map_deny = +my_pam_service
                         </para>
                         <para>
                             Default: true
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>dyndns_dot_cacert (string)</term>
+                    <listitem>
+                        <para>
+                            This option specifies the file of the certificate
+                            authorities certificates (in PEM format) in order
+                            to verify the remote server TLS certificate when
+                            using  DoT.
+                        </para>
+                        <para>
+                            Default: None (use global certificate store)
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>dyndns_dot_cert (string)</term>
+                    <listitem>
+                        <para>
+                            This option sets the certificate(s) file for
+                            authentication for the DoT transport to the remote
+                            server. The certificate chain file is expected to
+                            be in PEM format.
+                        </para>
+                        <para>
+                            The <emphasis>dyndns_dot_cert</emphasis> and
+                            <emphasis>dyndns_dot_key</emphasis> options must be
+                            both set to achieve mutual TLS authentication.
+                        </para>
+                        <para>
+                            Default: None (Do not use TLS authentication)
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>dyndns_dot_key (string)</term>
+                    <listitem>
+                        <para>
+                            This option sets the key file for authenticated
+                            encryption for the DoT transport to the remote
+                            server. The private key file is expected to
+                            be in PEM format.
+                        </para>
+                        <para>
+                            Default: None (Do not use TLS authentication)
                         </para>
                     </listitem>
                 </varlistentry>

@@ -114,6 +114,9 @@ class SSSDOptions(object):
         'pam_gssapi_check_upn': _('Whether to match authenticated UPN with target user'),
         'pam_gssapi_indicators_map': _('List of pairs <PAM service>:<authentication indicator> that '
                                        'must be enforced for PAM access with GSSAPI authentication'),
+        'pam_gssapi_indicators_apply': _('List of triples <type>:<value>:<authentication indicator> that '
+                                         'assigns additional information from the Kerberos ticket to an '
+                                         'authentication indicator.'),
         'pam_passkey_auth': _('Allow passkey device authentication.'),
         'passkey_child_timeout': _('How many seconds will pam_sss wait for passkey_child to finish'),
         'passkey_debug_libfido2': _('Enable debugging in the libfido2 library'),
@@ -186,8 +189,8 @@ class SSSDOptions(object):
         'dns_resolver_op_timeout': _('How long should keep trying to resolve single DNS query (seconds)'),
         'dns_resolver_timeout': _('How long to wait for replies from DNS when resolving servers (seconds)'),
         'dns_discovery_domain': _('The domain part of service discovery DNS query'),
-        'failover_primary_timeout': _('How often SSSD tries to reconnect to the primary server after a successful '
-                                      'connection to the backup server.'),
+        'failover_primary_timeout': _('Specifies the interval, in seconds, that SSSD waits before attempting to reconnect to the primary '
+                                      'server after a successful connection to the backup server'),
         'override_gid': _('Override GID value from the identity provider with this value'),
         'case_sensitive': _('Treat usernames as case sensitive'),
         'entry_cache_user_timeout': _('Entry cache timeout length (seconds)'),
@@ -200,6 +203,8 @@ class SSSDOptions(object):
         'refresh_expired_interval': _('How often should expired entries be refreshed in background'),
         'refresh_expired_interval_offset': _("Maximum period deviation when refreshing expired entries in background"),
         'dyndns_update': _("Whether to automatically update the client's DNS entry"),
+        'dyndns_update_per_family': _('Whether DNS update of A and AAAA record should be performed '
+                                      'in one update or in two separate updates'),
         'dyndns_ttl': _("The TTL to apply to the client's DNS entry after updating it"),
         'dyndns_iface': _("The interface whose IP should be used for dynamic DNS updates"),
         'dyndns_refresh_interval': _("How often to periodically update the client's DNS entry"),
@@ -208,6 +213,9 @@ class SSSDOptions(object):
         'dyndns_force_tcp': _("Whether the nsupdate utility should default to using TCP"),
         'dyndns_auth': _("What kind of authentication should be used to perform the DNS update"),
         'dyndns_server': _("Override the DNS server used to perform the DNS update"),
+        'dyndns_dot_cacert': _("The file of the certificate authorities certificates for DoT"),
+        'dyndns_dot_cert': _("The certificate(s) file for authentication for the DoT transport"),
+        'dyndns_dot_key': _("The key file for authenticated encryption for the DoT transport"),
         'subdomain_enumerate': _('Control enumeration of trusted domains'),
         'subdomain_refresh_interval': _('How often should subdomains list be refreshed'),
         'subdomain_refresh_interval_offset': _('Maximum period deviation when refreshing the subdomain list'),
@@ -243,7 +251,6 @@ class SSSDOptions(object):
         'ipa_automount_location': _("The automounter location this IPA client is using"),
         'ipa_master_domain_search_base': _("Search base for object containing info about IPA domain"),
         'ipa_ranges_search_base': _("Search base for objects containing info about ID ranges"),
-        'ipa_enable_dns_sites': _("Enable DNS sites - location based service discovery"),
         'ipa_views_search_base': _("Search base for view containers"),
         'ipa_view_class': _("Objectclass for view containers"),
         'ipa_view_name': _("Attribute with the name of the view"),
@@ -357,6 +364,7 @@ class SSSDOptions(object):
         'ldap_uri': _('ldap_uri, The URI of the LDAP server'),
         'ldap_backup_uri': _('ldap_backup_uri, The URI of the LDAP server'),
         'ldap_search_base': _('The default base DN'),
+        'ldap_read_rootdse': _('How to read rootDSE from LDAP server'),
         'ldap_schema': _('The Schema Type in use on the LDAP server, rfc2307'),
         'ldap_pwmodify_mode': _('Mode used to change user password'),
         'ldap_default_bind_dn': _('The default bind DN'),
@@ -451,6 +459,14 @@ class SSSDOptions(object):
         'ldap_user_email': _('attribute containing the email address of the user'),
         'ldap_user_passkey': _('attribute containing the passkey mapping data of the user'),
         'ldap_user_extra_attrs': _('A list of extra attributes to download along with the user entry'),
+
+        'ldap_subid_ranges_search_base': _("Search base for SUBID ranges"),
+        'ldap_subuid_object_class': _("The object class of an subid entry in LDAP."),
+        'ldap_subuid_count': _("Subordinate user ID count attribute"),
+        'ldap_subgid_count': _("Subordinate group ID count attribute"),
+        'ldap_subuid_number': _("User ID range start value attribute"),
+        'ldap_subgid_number': _("Group ID range start value attribute"),
+        'ldap_subid_range_owner': _("Owner of an entry"),
 
         'ldap_group_search_base': _('Base DN for group lookups'),
         'ldap_group_object_class': _('Objectclass for groups'),

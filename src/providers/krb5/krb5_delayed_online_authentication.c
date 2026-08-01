@@ -160,6 +160,7 @@ static errno_t authenticate_stored_users(
     iter = new_hash_iter_context(deferred_auth_ctx->user_table);
     if (iter == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "new_hash_iter_context failed.\n");
+        hash_destroy(uid_table);
         return EINVAL;
     }
 
@@ -205,6 +206,7 @@ static errno_t authenticate_stored_users(
     }
 
     talloc_free(iter);
+    hash_destroy(uid_table);
 
     return EOK;
 }
@@ -258,7 +260,7 @@ errno_t add_user_to_delayed_online_authentication(struct krb5_ctx *krb5_ctx,
         return EINVAL;
     }
 
-    if (sss_authtok_get_type(pd->authtok) != SSS_AUTHTOK_TYPE_PASSWORD) {
+    if (!IS_PW_OR_ST_AUTHTOK(pd->authtok)) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Invalid authtok for user [%s].\n", pd->user);
         return EINVAL;

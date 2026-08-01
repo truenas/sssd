@@ -33,18 +33,16 @@
 errno_t sdap_add_incomplete_groups(struct sysdb_ctx *sysdb,
                                    struct sss_domain_info *domain,
                                    struct sdap_options *opts,
-                                   char **sysdb_groupnames,
                                    struct sysdb_attrs **ldap_groups,
                                    int ldap_groups_count)
 {
     TALLOC_CTX *tmp_ctx;
-    struct ldb_message *msg;
-    int i, mi, ai;
-    const char *groupname;
-    const char *original_dn;
+    struct ldb_message *msg = NULL;
+    int i;
+    const char *groupname = NULL;
+    const char *original_dn = NULL;
     const char *uuid = NULL;
-    char **missing;
-    gid_t gid;
+    gid_t gid = 0;
     int ret;
     errno_t sret;
     bool in_transaction = false;
@@ -61,43 +59,6 @@ errno_t sdap_add_incomplete_groups(struct sysdb_ctx *sysdb,
     tmp_ctx = talloc_new(NULL);
     if (!tmp_ctx) return ENOMEM;
 
-    missing = talloc_array(tmp_ctx, char *, ldap_groups_count+1);
-    if (!missing) {
-        ret = ENOMEM;
-        goto done;
-    }
-    mi = 0;
-
-    for (i=0; sysdb_groupnames[i]; i++) {
-        subdomain = find_domain_by_object_name(domain, sysdb_groupnames[i]);
-        if (subdomain == NULL) {
-            subdomain = domain;
-        }
-        ret = sysdb_search_group_by_name(tmp_ctx, subdomain, sysdb_groupnames[i], NULL,
-                                         &msg);
-        if (ret == EOK) {
-            continue;
-        } else if (ret == ENOENT) {
-            missing[mi] = talloc_strdup(missing, sysdb_groupnames[i]);
-            DEBUG(SSSDBG_TRACE_LIBS, "Group #%d [%s][%s] is not cached, " \
-                      "need to add a fake entry\n",
-                      i, sysdb_groupnames[i], missing[mi]);
-            mi++;
-            continue;
-        } else if (ret != ENOENT) {
-            DEBUG(SSSDBG_CRIT_FAILURE, "search for group failed [%d]: %s\n",
-                      ret, strerror(ret));
-            goto done;
-        }
-    }
-    missing[mi] = NULL;
-
-    /* All groups are cached, nothing to do */
-    if (mi == 0) {
-        ret = EOK;
-        goto done;
-    }
-
     use_id_mapping = sdap_idmap_domain_has_algorithmic_mapping(opts->idmap_ctx,
                                                              domain->name,
                                                              domain->domain_id);
@@ -111,153 +72,157 @@ errno_t sdap_add_incomplete_groups(struct sysdb_ctx *sysdb,
     }
     in_transaction = true;
 
-
     now = time(NULL);
-    for (i=0; missing[i]; i++) {
-        /* The group is not in sysdb, need to add a fake entry */
-        for (ai=0; ai < ldap_groups_count; ai++) {
-            ret = sdap_get_group_primary_name(tmp_ctx, opts, ldap_groups[ai],
-                                              domain, &groupname);
-            if (ret != EOK) {
-                DEBUG(SSSDBG_CRIT_FAILURE,
-                      "The group has no name attribute\n");
+    for (i = 0; i < ldap_groups_count; i++) {
+        gid = 0;
+        talloc_zfree(sid_str);
+        talloc_zfree(groupname);
+        talloc_zfree(msg);
+        original_dn = NULL;  /* don't free - this points to 'ldap_groups' internals */
+        uuid = NULL;
+        ret = sdap_get_group_primary_name(tmp_ctx, opts, ldap_groups[i],
+                                          domain, &groupname);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "The group has no name attribute\n");
+            goto done;
+        }
+
+        subdomain = find_domain_by_object_name(domain, groupname);
+        if (subdomain == NULL) {
+            subdomain = domain;
+        }
+
+        ret = sysdb_search_group_by_name(tmp_ctx, subdomain, groupname,
+                                         NULL, &msg);
+        if (ret == EOK) {
+            continue;
+        } else if (ret != ENOENT) {
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "search for group failed [%d]: %s\n",
+                  ret, strerror(ret));
+            goto done;
+        }
+
+        DEBUG(SSSDBG_TRACE_LIBS, "Group #%d [%s] is not cached, "
+                  "need to add a fake entry\n", i, groupname);
+
+        posix = true;
+
+        ret = sdap_attrs_get_sid_str(
+                tmp_ctx, opts->idmap_ctx, ldap_groups[i],
+                opts->group_map[SDAP_AT_GROUP_OBJECTSID].sys_name,
+                &sid_str);
+        if (ret != EOK && ret != ENOENT) goto done;
+
+        if (use_id_mapping) {
+            if (sid_str == NULL) {
+                DEBUG(SSSDBG_MINOR_FAILURE, "No SID for group [%s] "
+                                             "while id-mapping.\n",
+                                             groupname);
+                ret = EINVAL;
                 goto done;
             }
 
-            if (strcmp(groupname, missing[i]) == 0) {
-                posix = true;
+            DEBUG(SSSDBG_TRACE_LIBS,
+                  "Mapping group [%s] objectSID to unix ID\n", groupname);
 
-                ret = sdap_attrs_get_sid_str(
-                        tmp_ctx, opts->idmap_ctx, ldap_groups[ai],
-                        opts->group_map[SDAP_AT_GROUP_OBJECTSID].sys_name,
-                        &sid_str);
-                if (ret != EOK && ret != ENOENT) goto done;
+            DEBUG(SSSDBG_TRACE_INTERNAL,
+                  "Group [%s] has objectSID [%s]\n",
+                   groupname, sid_str);
 
-                if (use_id_mapping) {
-                    if (sid_str == NULL) {
-                        DEBUG(SSSDBG_MINOR_FAILURE, "No SID for group [%s] " \
-                                                     "while id-mapping.\n",
-                                                     groupname);
-                        ret = EINVAL;
-                        goto done;
-                    }
-
-                    DEBUG(SSSDBG_TRACE_LIBS,
-                          "Mapping group [%s] objectSID to unix ID\n", groupname);
-
-                    DEBUG(SSSDBG_TRACE_INTERNAL,
-                          "Group [%s] has objectSID [%s]\n",
-                           groupname, sid_str);
-
-                    /* Convert the SID into a UNIX group ID */
-                    ret = sdap_idmap_sid_to_unix(opts->idmap_ctx, sid_str,
-                                                 &gid);
-                    if (ret == EOK) {
-                        DEBUG(SSSDBG_TRACE_INTERNAL,
-                              "Group [%s] has mapped gid [%lu]\n",
-                               groupname, (unsigned long)gid);
-                    } else {
-                        posix = false;
-                        gid = 0;
-
-                        DEBUG(SSSDBG_TRACE_INTERNAL,
-                              "Group [%s] cannot be mapped. "
-                               "Treating as a non-POSIX group\n",
-                               groupname);
-                    }
-
-                } else {
-                    ret = sysdb_attrs_get_uint32_t(ldap_groups[ai],
-                                                   SYSDB_GIDNUM,
-                                                   &gid);
-                    if (ret == ENOENT || (ret == EOK && gid == 0)) {
-                        DEBUG(SSSDBG_TRACE_LIBS, "The group %s gid was %s\n",
-                              groupname, ret == ENOENT ? "missing" : "zero");
-                        DEBUG(SSSDBG_TRACE_FUNC,
-                              "Marking group %s as non-POSIX and setting GID=0!\n",
-                              groupname);
-                        gid = 0;
-                        posix = false;
-                    } else if (ret) {
-                        DEBUG(SSSDBG_CRIT_FAILURE,
-                              "The GID attribute is malformed\n");
-                        goto done;
-                    }
-                }
-
-                ret = sysdb_attrs_get_string(ldap_groups[ai],
-                                             SYSDB_ORIG_DN,
-                                             &original_dn);
-                if (ret) {
-                    DEBUG(SSSDBG_FUNC_DATA,
-                          "The group has no original DN\n");
-                    original_dn = NULL;
-                }
-
-                ret = sysdb_handle_original_uuid(
-                                   opts->group_map[SDAP_AT_GROUP_UUID].def_name,
-                                   ldap_groups[ai],
-                                   opts->group_map[SDAP_AT_GROUP_UUID].sys_name,
-                                   ldap_groups[ai], "uniqueIDstr");
-                if (ret != EOK) {
-                    DEBUG((ret == ENOENT) ? SSSDBG_TRACE_ALL : SSSDBG_MINOR_FAILURE,
-                          "Failed to retrieve UUID [%d][%s].\n",
-                          ret, sss_strerror(ret));
-                }
-
-                ret = sysdb_attrs_get_string(ldap_groups[ai],
-                                             "uniqueIDstr",
-                                             &uuid);
-                if (ret) {
-                    DEBUG(SSSDBG_FUNC_DATA,
-                          "The group has no UUID\n");
-                    uuid = NULL;
-                }
-
-                ret = sdap_check_ad_group_type(domain, opts, ldap_groups[ai],
-                                               groupname, &need_filter);
-                if (ret != EOK) {
-                    goto done;
-                }
-
-                if (need_filter) {
-                    posix = false;
-                    gid = 0;
-                }
+            /* Convert the SID into a UNIX group ID */
+            ret = sdap_idmap_sid_to_unix(opts->idmap_ctx, sid_str,
+                                         &gid);
+            if (ret == EOK) {
+                DEBUG(SSSDBG_TRACE_INTERNAL,
+                      "Group [%s] has mapped gid [%lu]\n",
+                       groupname, (unsigned long)gid);
+            } else {
+                posix = false;
 
                 DEBUG(SSSDBG_TRACE_INTERNAL,
-                      "Adding fake group %s to sysdb\n", groupname);
-                subdomain = find_domain_by_object_name(domain, groupname);
-                if (subdomain == NULL) {
-                    subdomain = domain;
-                }
-                ret = sysdb_add_incomplete_group(subdomain, groupname, gid,
-                                                 original_dn, sid_str,
-                                                 uuid, posix, now);
-                if (ret == ERR_GID_DUPLICATED) {
-                    /* In case o group id-collision, do:
-                     * - Delete the group from sysdb
-                     * - Add the new incomplete group
-                     * - Notify the NSS responder that the entry has also to be
-                     *   removed from the memory cache
-                     */
-                    ret = sdap_handle_id_collision_for_incomplete_groups(
-                                            opts->dp, subdomain, groupname, gid,
-                                            original_dn, sid_str, uuid, posix,
-                                            now);
-                }
+                      "Group [%s] cannot be mapped. "
+                       "Treating as a non-POSIX group\n",
+                       groupname);
+            }
 
-                if (ret != EOK) {
-                    goto done;
-                }
-                break;
+        } else {
+            ret = sysdb_attrs_get_uint32_t(ldap_groups[i],
+                                           SYSDB_GIDNUM,
+                                           &gid);
+            if (ret == ENOENT || (ret == EOK && gid == 0)) {
+                DEBUG(SSSDBG_TRACE_LIBS, "The group %s gid was %s\n",
+                      groupname, ret == ENOENT ? "missing" : "zero");
+                DEBUG(SSSDBG_TRACE_FUNC,
+                      "Marking group %s as non-POSIX!\n",
+                      groupname);
+                posix = false;
+            } else if (ret) {
+                DEBUG(SSSDBG_CRIT_FAILURE,
+                      "The GID attribute is malformed\n");
+                goto done;
             }
         }
 
-        if (ai == ldap_groups_count) {
-            DEBUG(SSSDBG_OP_FAILURE,
-                  "Group %s not present in LDAP\n", missing[i]);
-            ret = EINVAL;
+        ret = sysdb_attrs_get_string(ldap_groups[i],
+                                     SYSDB_ORIG_DN,
+                                     &original_dn);
+        if (ret) {
+            DEBUG(SSSDBG_FUNC_DATA,
+                  "The group has no original DN\n");
+            original_dn = NULL;
+        }
+
+        ret = sysdb_handle_original_uuid(
+                           opts->group_map[SDAP_AT_GROUP_UUID].def_name,
+                           ldap_groups[i],
+                           opts->group_map[SDAP_AT_GROUP_UUID].sys_name,
+                           ldap_groups[i], "uniqueIDstr");
+        if (ret != EOK) {
+            DEBUG((ret == ENOENT) ? SSSDBG_TRACE_ALL : SSSDBG_MINOR_FAILURE,
+                  "Failed to retrieve UUID [%d][%s].\n",
+                  ret, sss_strerror(ret));
+        }
+
+        ret = sysdb_attrs_get_string(ldap_groups[i],
+                                     "uniqueIDstr",
+                                     &uuid);
+        if (ret) {
+            DEBUG(SSSDBG_FUNC_DATA,
+                  "The group has no UUID\n");
+            uuid = NULL;
+        }
+
+        ret = sdap_check_ad_group_type(domain, opts, ldap_groups[i],
+                                       groupname, &need_filter);
+        if (ret != EOK) {
+            goto done;
+        }
+
+        if (need_filter) {
+            posix = false;
+        }
+
+        DEBUG(SSSDBG_TRACE_INTERNAL,
+              "Adding fake group %s to sysdb\n", groupname);
+        ret = sysdb_add_incomplete_group(subdomain, groupname, gid,
+                                         original_dn, sid_str,
+                                         uuid, posix, now);
+        if (ret == ERR_GID_DUPLICATED) {
+            /* In case of group id-collision, do:
+             * - Delete the group from sysdb
+             * - Add the new incomplete group
+             * - Notify the NSS responder that the entry has also to be
+             *   removed from the memory cache
+             */
+            ret = sdap_handle_id_collision_for_incomplete_groups(
+                                    opts->dp, subdomain, groupname, gid,
+                                    original_dn, sid_str, uuid, posix,
+                                    now);
+        }
+
+        if (ret != EOK) {
             goto done;
         }
     }
@@ -350,8 +315,7 @@ int sdap_initgr_common_store(struct sysdb_ctx *sysdb,
      */
     if (add_groups && add_groups[0]) {
         ret = sdap_add_incomplete_groups(sysdb, domain, opts,
-                                         add_groups, ldap_groups,
-                                         ldap_groups_count);
+                                         ldap_groups, ldap_groups_count);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE, "Adding incomplete groups failed\n");
             goto done;
@@ -666,26 +630,7 @@ sdap_nested_groups_store(struct sysdb_ctx *sysdb,
                          unsigned long count)
 {
     errno_t ret, tret;
-    TALLOC_CTX *tmp_ctx;
-    char **groupnamelist = NULL;
     bool in_transaction = false;
-
-    tmp_ctx = talloc_new(NULL);
-    if (!tmp_ctx) return ENOMEM;
-
-    if (count > 0) {
-        ret = sdap_get_primary_fqdn_list(domain, tmp_ctx, groups, count,
-                                       opts->group_map[SDAP_AT_GROUP_NAME].name,
-                                       opts->group_map[SDAP_AT_GROUP_OBJECTSID].name,
-                                       opts->idmap_ctx,
-                                       &groupnamelist);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_MINOR_FAILURE,
-                  "sysdb_attrs_primary_name_list failed [%d]: %s\n",
-                    ret, strerror(ret));
-            goto done;
-        }
-    }
 
     ret = sysdb_transaction_start(sysdb);
     if (ret != EOK) {
@@ -694,8 +639,7 @@ sdap_nested_groups_store(struct sysdb_ctx *sysdb,
     }
     in_transaction = true;
 
-    ret = sdap_add_incomplete_groups(sysdb, domain, opts, groupnamelist,
-                                     groups, count);
+    ret = sdap_add_incomplete_groups(sysdb, domain, opts, groups, count);
     if (ret != EOK) {
         DEBUG(SSSDBG_TRACE_FUNC, "Could not add incomplete groups [%d]: %s\n",
                    ret, strerror(ret));
@@ -717,8 +661,6 @@ done:
             DEBUG(SSSDBG_CRIT_FAILURE, "Failed to cancel transaction\n");
         }
     }
-
-    talloc_free(tmp_ctx);
     return ret;
 }
 
@@ -785,6 +727,8 @@ struct sdap_initgr_nested_state {
     struct tevent_context *ev;
     struct sysdb_ctx *sysdb;
     struct sdap_options *opts;
+    struct sdap_attr_map *user_map;
+    size_t user_map_cnt;
     struct sss_domain_info *dom;
     struct sdap_handle *sh;
 
@@ -812,6 +756,8 @@ static void sdap_initgr_nested_store(struct tevent_req *req);
 static struct tevent_req *sdap_initgr_nested_send(TALLOC_CTX *memctx,
                                                   struct tevent_context *ev,
                                                   struct sdap_options *opts,
+                                                  struct sdap_attr_map *user_map,
+                                                  size_t user_map_cnt,
                                                   struct sysdb_ctx *sysdb,
                                                   struct sss_domain_info *dom,
                                                   struct sdap_handle *sh,
@@ -828,6 +774,8 @@ static struct tevent_req *sdap_initgr_nested_send(TALLOC_CTX *memctx,
 
     state->ev = ev;
     state->opts = opts;
+    state->user_map = user_map;
+    state->user_map_cnt = user_map_cnt;
     state->sysdb = sysdb;
     state->dom = dom;
     state->sh = sh;
@@ -968,7 +916,7 @@ static errno_t sdap_initgr_nested_deref_search(struct tevent_req *req)
 
     subreq = sdap_deref_search_send(state, state->ev, state->opts,
                     state->sh, state->orig_dn,
-                    state->opts->user_map[SDAP_AT_USER_MEMBEROF].name,
+                    state->user_map[SDAP_AT_USER_MEMBEROF].name,
                     sdap_attrs, num_maps, maps, timeout);
     if (!subreq) {
         ret = EIO;
@@ -2697,6 +2645,8 @@ struct sdap_get_initgr_state {
     struct tevent_context *ev;
     struct sysdb_ctx *sysdb;
     struct sdap_options *opts;
+    struct sdap_attr_map *user_map;
+    size_t user_map_cnt;
     struct sss_domain_info *dom;
     struct sdap_domain *sdom;
     struct sdap_handle *sh;
@@ -2731,6 +2681,8 @@ struct tevent_req *sdap_get_initgr_send(TALLOC_CTX *memctx,
                                         struct sdap_domain *sdom,
                                         struct sdap_handle *sh,
                                         struct sdap_id_ctx *id_ctx,
+                                        struct sdap_attr_map *user_map,
+                                        size_t user_map_cnt,
                                         struct sdap_id_conn_ctx *conn,
                                         struct sdap_search_base **search_bases,
                                         const char *filter_value,
@@ -2754,6 +2706,12 @@ struct tevent_req *sdap_get_initgr_send(TALLOC_CTX *memctx,
 
     state->ev = ev;
     state->opts = id_ctx->opts;
+    state->user_map = user_map;
+    state->user_map_cnt = user_map_cnt;
+    if (state->user_map == NULL) {
+        state->user_map = id_ctx->opts->user_map;
+        state->user_map_cnt = id_ctx->opts->user_map_cnt;
+    }
     state->dom = sdom->dom;
     state->sysdb = sdom->dom->sysdb;
     state->sdom = sdom;
@@ -2785,7 +2743,7 @@ struct tevent_req *sdap_get_initgr_send(TALLOC_CTX *memctx,
 
     switch (filter_type) {
     case BE_FILTER_SECID:
-        search_attr =  state->opts->user_map[SDAP_AT_USER_OBJECTSID].name;
+        search_attr =  state->user_map[SDAP_AT_USER_OBJECTSID].name;
 
         ret = sss_filter_sanitize(state, state->filter_value, &clean_name);
         if (ret != EOK) {
@@ -2794,7 +2752,7 @@ struct tevent_req *sdap_get_initgr_send(TALLOC_CTX *memctx,
         }
         break;
     case BE_FILTER_UUID:
-        search_attr =  state->opts->user_map[SDAP_AT_USER_UUID].name;
+        search_attr =  state->user_map[SDAP_AT_USER_UUID].name;
 
         ret = sss_filter_sanitize(state, state->filter_value, &clean_name);
         if (ret != EOK) {
@@ -2812,23 +2770,23 @@ struct tevent_req *sdap_get_initgr_send(TALLOC_CTX *memctx,
             }
 
             ep_filter = get_enterprise_principal_string_filter(state,
-                                 state->opts->user_map[SDAP_AT_USER_PRINC].name,
+                                 state->user_map[SDAP_AT_USER_PRINC].name,
                                  clean_name, state->opts->basic);
             state->user_base_filter =
                     talloc_asprintf(state,
                                  "(&(|(%s=%s)(%s=%s)%s)(objectclass=%s)",
-                                 state->opts->user_map[SDAP_AT_USER_PRINC].name,
+                                 state->user_map[SDAP_AT_USER_PRINC].name,
                                  clean_name,
-                                 state->opts->user_map[SDAP_AT_USER_EMAIL].name,
+                                 state->user_map[SDAP_AT_USER_EMAIL].name,
                                  clean_name,
                                  ep_filter == NULL ? "" : ep_filter,
-                                 state->opts->user_map[SDAP_OC_USER].name);
+                                 state->user_map[SDAP_OC_USER].name);
             if (state->user_base_filter == NULL) {
                 talloc_zfree(req);
                 return NULL;
             }
         } else {
-            search_attr = state->opts->user_map[SDAP_AT_USER_NAME].name;
+            search_attr = state->user_map[SDAP_AT_USER_NAME].name;
 
             ret = sss_parse_internal_fqname(state, filter_value,
                                             &state->shortname, NULL);
@@ -2860,7 +2818,7 @@ struct tevent_req *sdap_get_initgr_send(TALLOC_CTX *memctx,
         state->user_base_filter =
                 talloc_asprintf(state, "(&(%s=%s)(objectclass=%s)",
                                 search_attr, clean_name,
-                                state->opts->user_map[SDAP_OC_USER].name);
+                                state->user_map[SDAP_OC_USER].name);
         if (!state->user_base_filter) {
             talloc_zfree(req);
             return NULL;
@@ -2877,14 +2835,14 @@ struct tevent_req *sdap_get_initgr_send(TALLOC_CTX *memctx,
          */
         state->user_base_filter = talloc_asprintf_append(state->user_base_filter,
                                         "(%s=*))",
-                                        id_ctx->opts->user_map[SDAP_AT_USER_OBJECTSID].name);
+                                        state->user_map[SDAP_AT_USER_OBJECTSID].name);
     } else {
         /* When not ID-mapping or looking up app users, make sure there
          * is a non-NULL UID */
         state->user_base_filter = talloc_asprintf_append(state->user_base_filter,
                                         "(&(%s=*)(!(%s=0))))",
-                                        id_ctx->opts->user_map[SDAP_AT_USER_UID].name,
-                                        id_ctx->opts->user_map[SDAP_AT_USER_UID].name);
+                                        state->user_map[SDAP_AT_USER_UID].name,
+                                        state->user_map[SDAP_AT_USER_UID].name);
     }
     if (!state->user_base_filter) {
         talloc_zfree(req);
@@ -2892,8 +2850,8 @@ struct tevent_req *sdap_get_initgr_send(TALLOC_CTX *memctx,
     }
 
     ret = build_attrs_from_map(state,
-                               state->opts->user_map,
-                               state->opts->user_map_cnt,
+                               state->user_map,
+                               state->user_map_cnt,
                                NULL, &state->user_attrs, NULL);
     if (ret) {
         talloc_zfree(req);
@@ -2990,7 +2948,7 @@ static errno_t sdap_get_initgr_next_base(struct tevent_req *req)
             state->user_search_bases[state->user_base_iter]->basedn,
             state->user_search_bases[state->user_base_iter]->scope,
             state->filter, state->user_attrs,
-            state->opts->user_map, state->opts->user_map_cnt,
+            state->user_map, state->user_map_cnt,
             state->timeout,
             false);
     if (!subreq) {
@@ -3179,6 +3137,7 @@ static void sdap_get_initgr_user(struct tevent_req *subreq)
 
     case SDAP_SCHEMA_IPA_V1:
         subreq = sdap_initgr_nested_send(state, state->ev, state->opts,
+                                         state->user_map, state->user_map_cnt,
                                          state->sysdb, state->dom, state->sh,
                                          state->orig_user, state->grp_attrs);
         if (!subreq) {
@@ -3377,7 +3336,7 @@ static void sdap_get_initgr_done(struct tevent_req *subreq)
          */
         ret = sdap_attrs_get_sid_str(
                 tmp_ctx, opts->idmap_ctx, state->orig_user,
-                opts->user_map[SDAP_AT_USER_OBJECTSID].sys_name,
+                state->user_map[SDAP_AT_USER_OBJECTSID].sys_name,
                 &sid_str);
         if (ret != EOK) goto done;
 
@@ -3392,7 +3351,7 @@ static void sdap_get_initgr_done(struct tevent_req *subreq)
 
         ret = sysdb_attrs_get_uint32_t(
                 state->orig_user,
-                opts->user_map[SDAP_AT_USER_PRIMARY_GROUP].sys_name,
+                state->user_map[SDAP_AT_USER_PRIMARY_GROUP].sys_name,
                 &primary_gid);
         if (ret != EOK) {
             DEBUG(SSSDBG_MINOR_FAILURE,

@@ -26,6 +26,7 @@
 #include <stdbool.h>
 #include <pwd.h>
 #include <grp.h>
+#include <sys/types.h>
 
 #include "config.h"
 #if HAVE_PTHREAD
@@ -48,7 +49,7 @@ enum sss_mc_state {
  * `SSS_CLI_MC_CTX_INITIALIZER` and `sss_nss_mc_destroy_ctx()`.
  */
 struct sss_cli_mc_ctx {
-    enum sss_mc_state initialized;
+    _Atomic(enum sss_mc_state) initialized;
 #if HAVE_PTHREAD
     pthread_mutex_t *mutex;
 #endif

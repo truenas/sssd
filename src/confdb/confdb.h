@@ -88,8 +88,7 @@
 /* Both monitor and domains */
 #define CONFDB_NAME_REGEX   "re_expression"
 #define CONFDB_FULL_NAME_FORMAT "full_name_format"
-#define CONFDB_DEFAULT_FULL_NAME_FORMAT_INTERNAL  "%1$s@%2$s%3$s"
-#define CONFDB_DEFAULT_FULL_NAME_FORMAT           "%1$s@%2$s"
+#define CONFDB_DEFAULT_FULL_NAME_FORMAT "%1$s@%2$s"
 
 /* Responders */
 #define CONFDB_RESPONDER_GET_DOMAINS_TIMEOUT "get_domains_timeout"
@@ -158,6 +157,7 @@
 #define CONFDB_PAM_GSSAPI_SERVICES "pam_gssapi_services"
 #define CONFDB_PAM_GSSAPI_CHECK_UPN "pam_gssapi_check_upn"
 #define CONFDB_PAM_GSSAPI_INDICATORS_MAP "pam_gssapi_indicators_map"
+#define CONFDB_PAM_GSSAPI_INDICATORS_APPLY "pam_gssapi_indicators_apply"
 #define CONFDB_PAM_PASSKEY_AUTH "pam_passkey_auth"
 #define CONFDB_PAM_PASSKEY_CHILD_TIMEOUT "passkey_child_timeout"
 #define CONFDB_PAM_PASSKEY_DEBUG_LIBFIDO2 "passkey_debug_libfido2"
@@ -400,6 +400,9 @@ struct sss_domain_info {
     const char *homedir_substr;
     const char *override_shell;
     const char *default_shell;
+    /* Domain specific ID override template attributes */
+    const char *template_homedir;
+    const char *template_shell;
 
     uint32_t user_timeout;
     uint32_t group_timeout;
@@ -429,6 +432,7 @@ struct sss_domain_info {
     char *dns_name;
     char *domain_id;
     uint32_t trust_direction;
+    uint32_t trust_type;
     struct timeval subdomains_last_checked;
 
     bool has_views;
@@ -468,6 +472,9 @@ struct sss_domain_info {
     char *gssapi_check_upn; /* true | false | NULL */
     /* List of indicators associated with the specific PAM service */
     char **gssapi_indicators_map;
+    /* List of additional Kerberos ticket data assigned to authentication
+     * indicators */
+    char **gssapi_indicators_apply;
 
     /* Counts how often the domain was not found during a refresh of the
      * domain list */

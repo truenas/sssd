@@ -366,13 +366,17 @@ static void krb5_auth_store_creds(struct sss_domain_info *domain,
                           domain->cache_credentials_min_ff_length);
                     ret = EINVAL;
                 }
-            } else if (sss_authtok_get_type(pd->authtok) ==
-                                                    SSS_AUTHTOK_TYPE_PASSWORD) {
+            } else if (IS_PW_OR_ST_AUTHTOK(pd->authtok)) {
+                /* At this point we can be sure that
+                 * SSS_AUTHTOK_TYPE_PAM_STACKED is a password because
+                 * krb5_auth_store_creds() is not called if 2FA/otp was used,
+                 * only if SSS_AUTHTOK_TYPE_2FA was used for authentication.
+                 */
                 ret = sss_authtok_get_password(pd->authtok, &password, NULL);
             } else {
                 DEBUG(SSSDBG_MINOR_FAILURE, "Cannot cache authtok type [%d].\n",
                       sss_authtok_get_type(pd->authtok));
-                ret = EINVAL;
+                return;
             }
             break;
         case SSS_PAM_CHAUTHTOK:
@@ -553,7 +557,8 @@ struct tevent_req *krb5_auth_send(TALLOC_CTX *mem_ctx,
                     && authtok_type != SSS_AUTHTOK_TYPE_OAUTH2
                     && authtok_type != SSS_AUTHTOK_TYPE_PASSKEY
                     && authtok_type != SSS_AUTHTOK_TYPE_PASSKEY_KRB
-                    && authtok_type != SSS_AUTHTOK_TYPE_PASSKEY_REPLY) {
+                    && authtok_type != SSS_AUTHTOK_TYPE_PASSKEY_REPLY
+                    && authtok_type != SSS_AUTHTOK_TYPE_PAM_STACKED) {
                 /* handle empty password gracefully */
                 if (authtok_type == SSS_AUTHTOK_TYPE_EMPTY) {
                     DEBUG(SSSDBG_CRIT_FAILURE,
@@ -1210,8 +1215,7 @@ static void krb5_auth_done(struct tevent_req *subreq)
     if (kr->is_offline) {
         if (dp_opt_get_bool(kr->krb5_ctx->opts,
                             KRB5_STORE_PASSWORD_IF_OFFLINE)
-                && sss_authtok_get_type(pd->authtok)
-                            == SSS_AUTHTOK_TYPE_PASSWORD) {
+                && IS_PW_OR_ST_AUTHTOK(pd->authtok)) {
             krb5_auth_cache_creds(state->kr->krb5_ctx,
                                   state->domain,
                                   state->be_ctx->cdb,

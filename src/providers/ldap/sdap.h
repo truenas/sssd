@@ -140,6 +140,7 @@ enum sdap_basic_opt {
     SDAP_URI = 0,
     SDAP_BACKUP_URI,
     SDAP_SEARCH_BASE,
+    SDAP_READ_ROOTDSE,
     SDAP_DEFAULT_BIND_DN,
     SDAP_DEFAULT_AUTHTOK_TYPE,
     SDAP_DEFAULT_AUTHTOK,
@@ -237,6 +238,7 @@ enum sdap_basic_opt {
     SDAP_PWDLOCKOUT_DN,
     SDAP_WILDCARD_LIMIT,
     SDAP_LIBRARY_DEBUG_LEVEL,
+    SDAP_SUBID_RANGES_SEARCH_BASE,
 
     SDAP_OPTS_BASIC /* opts counter */
 };
@@ -521,6 +523,8 @@ struct sdap_options {
     struct sdap_attr_map *service_map;
     struct sdap_attr_map *iphost_map;
     struct sdap_attr_map *ipnetwork_map;
+    struct sdap_attr_map *fsp_map;
+    size_t fsp_map_cnt;
 #ifdef BUILD_SUBID
     struct sdap_attr_map *subid_map;
 #endif
@@ -546,8 +550,9 @@ struct sdap_options {
 
     /* password modify mode */
     enum pwmodify_mode {
-        SDAP_PWMODIFY_EXOP = 1,     /* pwmodify extended operation */
-        SDAP_PWMODIFY_LDAP = 2      /* ldap_modify of userPassword */
+        SDAP_PWMODIFY_EXOP = 1,      /* pwmodify extended operation */
+        SDAP_PWMODIFY_LDAP = 2,      /* ldap_modify of userPassword */
+        SDAP_PWMODIFY_EXOP_FORCE = 3 /* forced pwmodify extended operation */
     } pwmodify_mode;
 
     /* The search bases for the domain or its subdomain */
@@ -580,6 +585,15 @@ struct sdap_id_ctx;
 struct sdap_attr_map_info {
     struct sdap_attr_map *map;
     int num_attrs;
+};
+
+struct sdap_attr_map_info_ex {
+    struct sdap_attr_map *map;
+    int num_attrs;
+    int map_type; /* optional helper to indicate the type of the map if
+                   * multiple maps are used */
+    const char *required_attrs[4]; /* optional list of required attributes where the
+                                    * presence should be checked */
 };
 
 struct sdap_deref_attrs {

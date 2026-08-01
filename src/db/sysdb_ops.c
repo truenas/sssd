@@ -712,6 +712,44 @@ done:
     return ret;
 }
 
+int sysdb_search_user_by_upn_with_view_res(TALLOC_CTX *mem_ctx,
+                                           struct sss_domain_info *domain,
+                                           bool domain_scope,
+                                           const char *upn,
+                                           const char **attrs,
+                                           struct ldb_result **out_res)
+{
+    int ret;
+    struct ldb_result *orig_obj = NULL;
+
+    /* The UPN or the email address cannot be overwritten and we can search
+     * directly the original object. */
+    ret = sysdb_search_user_by_upn_res(mem_ctx, domain, domain_scope, upn,
+                                       attrs, &orig_obj);
+    if (ret != EOK) {
+        DEBUG(ret == ENOENT ? SSSDBG_MINOR_FAILURE : SSSDBG_OP_FAILURE,
+              "Failed to find UPN [%s] in cache [%d][%s].\n",
+              upn, ret, sss_strerror(ret));
+        return ret;
+    }
+
+    /* If there are views we have to check if override values must be added to
+     * the original object. */
+    if (DOM_HAS_VIEWS(domain)) {
+        ret = sysdb_add_overrides_to_object(domain, orig_obj->msgs[0], NULL,
+                                            attrs);
+        if (ret != EOK && ret != ENOENT) {
+            talloc_free(orig_obj);
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_add_overrides_to_object failed.\n");
+            return ret;
+        }
+        ret = EOK;
+    }
+
+    *out_res = orig_obj;
+    return ret;
+}
+
 int sysdb_search_user_by_upn(TALLOC_CTX *mem_ctx,
                              struct sss_domain_info *domain,
                              bool domain_scope,
@@ -967,6 +1005,7 @@ static errno_t sysdb_create_ts_entry(struct sysdb_ctx *sysdb,
                                      struct sysdb_attrs *attrs)
 {
     struct ldb_message *msg;
+    const struct ldb_val *rdn_value;
     errno_t ret;
     int lret;
     TALLOC_CTX *tmp_ctx;
@@ -975,13 +1014,23 @@ static errno_t sysdb_create_ts_entry(struct sysdb_ctx *sysdb,
         return EOK;
     }
 
+    if (entry_dn == NULL) {
+        return EINVAL;
+    }
+
     tmp_ctx = talloc_new(NULL);
     if (tmp_ctx == NULL) {
         return ENOMEM;
     }
 
-    if (entry_dn == NULL) {
+    rdn_value = ldb_dn_get_rdn_val(entry_dn);
+    if (rdn_value == NULL) {
         ret = EINVAL;
+        goto done;
+    }
+
+    ret = sysdb_attrs_add_val_safe(attrs, SYSDB_NAME, rdn_value);
+    if (ret != EOK) {
         goto done;
     }
 
@@ -1010,7 +1059,8 @@ done:
 }
 
 static struct sysdb_attrs *ts_obj_attrs(TALLOC_CTX *mem_ctx,
-                                        enum sysdb_obj_type obj_type)
+                                        enum sysdb_obj_type obj_type,
+                                        const char *obj_name)
 {
     struct sysdb_attrs *attrs;
     const char *oc;
@@ -1033,6 +1083,12 @@ static struct sysdb_attrs *ts_obj_attrs(TALLOC_CTX *mem_ctx,
     }
 
     ret = sysdb_attrs_add_string(attrs, SYSDB_OBJECTCATEGORY, oc);
+    if (ret != EOK) {
+        talloc_free(attrs);
+        return NULL;
+    }
+
+    ret = sysdb_attrs_add_string(attrs, SYSDB_NAME, obj_name);
     if (ret != EOK) {
         talloc_free(attrs);
         return NULL;
@@ -1235,7 +1291,7 @@ static errno_t sysdb_create_ts_obj(struct sss_domain_info *domain,
         goto done;
     }
 
-    ts_attrs = ts_obj_attrs(tmp_ctx, obj_type);
+    ts_attrs = ts_obj_attrs(tmp_ctx, obj_type, obj_name);
     if (ts_attrs == NULL) {
         ret = ENOMEM;
         goto done;
@@ -1914,15 +1970,17 @@ int sysdb_add_user(struct sss_domain_info *domain,
             goto done;
         }
 
-        ret = sysdb_search_group_by_gid(tmp_ctx, domain, uid, NULL, &msg);
-        if (ret != ENOENT) {
-            if (ret == EOK) {
-                DEBUG(SSSDBG_OP_FAILURE,
-                    "Group with GID [%"SPRIgid"] already exists in an "
-                    "MPG domain\n", gid);
-                ret = EEXIST;
+        if (uid != 0) { /* uid == 0 means non-POSIX object */
+            ret = sysdb_search_group_by_gid(tmp_ctx, domain, uid, NULL, &msg);
+            if (ret != ENOENT) {
+                if (ret == EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE,
+                        "Group with GID [%"SPRIgid"] already exists in an "
+                        "MPG domain\n", uid);
+                    ret = EEXIST;
+                }
+                goto done;
             }
-            goto done;
         }
     }
 
@@ -1957,11 +2015,6 @@ int sysdb_add_user(struct sss_domain_info *domain,
     ret = sysdb_attrs_get_bool(attrs, SYSDB_POSIX, &posix);
     if (ret == ENOENT) {
         posix = true;
-        ret = sysdb_attrs_add_bool(attrs, SYSDB_POSIX, true);
-        if (ret) {
-            DEBUG(SSSDBG_TRACE_LIBS, "Failed to add posix attribute.\n");
-            goto done;
-        }
     } else if (ret != EOK) {
         DEBUG(SSSDBG_TRACE_LIBS, "Failed to get posix attribute.\n");
         goto done;
@@ -2021,11 +2074,19 @@ done:
 /* =Add-Basic-Group-NO-CHECKS============================================= */
 
 int sysdb_add_basic_group(struct sss_domain_info *domain,
-                          const char *name, gid_t gid)
+                          const char *name,
+                          bool is_posix,
+                          gid_t gid)
 {
     struct ldb_message *msg;
     int ret;
     TALLOC_CTX *tmp_ctx;
+
+    if (is_posix && gid == 0) {
+        DEBUG(SSSDBG_OP_FAILURE, "Failure adding [%s], POSIX groups with gid==0 "
+                                 "are not supported.\n", name);
+        return EINVAL;
+    }
 
     tmp_ctx = talloc_new(NULL);
     if (!tmp_ctx) {
@@ -2044,14 +2105,19 @@ int sysdb_add_basic_group(struct sss_domain_info *domain,
         ERROR_OUT(ret, ENOMEM, done);
     }
 
+    ret = sysdb_add_bool(msg, SYSDB_POSIX, is_posix);
+    if (ret) goto done;
+
     ret = sysdb_add_string(msg, SYSDB_OBJECTCATEGORY, SYSDB_GROUP_CLASS);
     if (ret) goto done;
 
     ret = sysdb_add_string(msg, SYSDB_NAME, name);
     if (ret) goto done;
 
-    ret = sysdb_add_ulong(msg, SYSDB_GIDNUM, (unsigned long)gid);
-    if (ret) goto done;
+    if (is_posix) {
+        ret = sysdb_add_ulong(msg, SYSDB_GIDNUM, (unsigned long)gid);
+        if (ret) goto done;
+    }
 
     /* creation time */
     ret = sysdb_add_ulong(msg, SYSDB_CREATE_TIME, (unsigned long)time(NULL));
@@ -2154,22 +2220,6 @@ int sysdb_add_group(struct sss_domain_info *domain,
         }
     }
 
-    /* try to add the group */
-    ret = sysdb_add_basic_group(domain, name, gid);
-    if (ret) {
-        DEBUG(SSSDBG_TRACE_LIBS,
-              "sysdb_add_basic_group failed for: %s with gid: "
-              "[%"SPRIgid"].\n", name, gid);
-        goto done;
-    }
-
-    ret = sysdb_create_ts_grp(domain, name, cache_timeout, now);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_MINOR_FAILURE,
-              "Cannot set timestamp cache attributes for a group\n");
-        /* Not fatal */
-    }
-
     if (!attrs) {
         attrs = sysdb_new_attrs(tmp_ctx);
         if (!attrs) {
@@ -2182,20 +2232,25 @@ int sysdb_add_group(struct sss_domain_info *domain,
     ret = sysdb_attrs_get_bool(attrs, SYSDB_POSIX, &posix);
     if (ret == ENOENT) {
         posix = true;
-        ret = sysdb_attrs_add_bool(attrs, SYSDB_POSIX, true);
-        if (ret) {
-            DEBUG(SSSDBG_TRACE_LIBS, "Failed to add posix attribute.\n");
-            goto done;
-        }
     } else if (ret != EOK) {
         DEBUG(SSSDBG_TRACE_LIBS, "Failed to get posix attribute.\n");
         goto done;
     }
 
-    if (posix && gid == 0) {
-        DEBUG(SSSDBG_OP_FAILURE, "Can't store posix user with gid=0.\n");
-        ret = EINVAL;
+    /* try to add the group */
+    ret = sysdb_add_basic_group(domain, name, posix, gid);
+    if (ret) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              "sysdb_add_basic_group failed for: %s with gid: "
+              "[%"SPRIgid"].\n", name, gid);
         goto done;
+    }
+
+    ret = sysdb_create_ts_grp(domain, name, cache_timeout, now);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_MINOR_FAILURE,
+              "Cannot set timestamp cache attributes for a group\n");
+        /* Not fatal */
     }
 
     if (!now) {
@@ -2284,7 +2339,7 @@ int sysdb_add_incomplete_group(struct sss_domain_info *domain,
     }
 
     /* try to add the group */
-    ret = sysdb_add_basic_group(domain, name, gid);
+    ret = sysdb_add_basic_group(domain, name, posix, gid);
     if (ret) goto done;
 
     if (!now) {
@@ -2311,9 +2366,6 @@ int sysdb_add_incomplete_group(struct sss_domain_info *domain,
     ret = sysdb_attrs_add_time_t(attrs, SYSDB_CACHE_EXPIRE,
                                  domain->ignore_group_members ?
                                      (now + domain->group_timeout) : (now-1));
-    if (ret) goto done;
-
-    ret = sysdb_attrs_add_bool(attrs, SYSDB_POSIX, posix);
     if (ret) goto done;
 
     if (original_dn) {
@@ -2613,6 +2665,22 @@ int sysdb_store_user(struct sss_domain_info *domain,
         }
     } else {
         /* the user exists, let's just replace attributes when set */
+        /*
+         * The sysdb_search_user_by_name() function also matches lowercased
+         * aliases, saved when the domain is case-insensitive. This means that
+         * the stored entry name can differ in capitalization from the search
+         * name. Use the cached entry name to perform the modification because
+         * if name capitalization in entry's DN differs the modify operation
+         * will fail.
+         */
+        const char *entry_name =
+            ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
+        if (entry_name != NULL) {
+            name = entry_name;
+        } else {
+            DEBUG(SSSDBG_MINOR_FAILURE, "User '%s' without a name?\n", name);
+        }
+
         ret = sysdb_store_user_attrs(domain, name, uid, gid, gecos, homedir,
                                      shell, orig_dn, attrs, remove_attrs,
                                      cache_timeout, now);
@@ -2847,6 +2915,22 @@ int sysdb_store_group(struct sss_domain_info *domain,
         ret = sysdb_store_new_group(domain, name, gid, attrs,
                                     cache_timeout, now);
     } else {
+        /*
+         * The sysdb_search_group_by_name() function also matches lowercased
+         * aliases, saved when the domain is case-insensitive. This means that
+         * the stored entry name can differ in capitalization from the search
+         * name. Use the cached entry name to perform the modification because
+         * if name capitalization in entry's DN differs the modify operation
+         * will fail.
+         */
+        const char *entry_name =
+            ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
+        if (entry_name != NULL) {
+            name = entry_name;
+        } else {
+            DEBUG(SSSDBG_MINOR_FAILURE, "Group '%s' without a name?\n", name);
+        }
+
         ret = sysdb_store_group_attrs(domain, name, gid, attrs,
                                       cache_timeout, now);
     }
@@ -4890,7 +4974,7 @@ errno_t sysdb_remove_attrs(struct sss_domain_info *domain,
         if (strcasecmp(remove_attrs[i], SYSDB_MEMBEROF) == 0) {
             continue;
         }
-        DEBUG(SSSDBG_TRACE_INTERNAL, "Removing attribute [%s] from [%s]\n",
+        DEBUG(SSSDBG_TRACE_ALL, "Removing attribute [%s] from [%s]\n",
                   remove_attrs[i], name);
         lret = ldb_msg_add_empty(msg, remove_attrs[i],
                                  LDB_FLAG_MOD_DELETE, NULL);
@@ -5380,80 +5464,6 @@ done:
     if (ret == ENOENT) {
         DEBUG(SSSDBG_TRACE_FUNC, "No such entry\n");
     } else if (ret) {
-        DEBUG(SSSDBG_OP_FAILURE, "Error: %d (%s)\n", ret, strerror(ret));
-    }
-    talloc_free(tmp_ctx);
-    return ret;
-}
-
-errno_t sysdb_get_user_members_recursively(TALLOC_CTX *mem_ctx,
-                                           struct sss_domain_info *dom,
-                                           struct ldb_dn *group_dn,
-                                           struct ldb_result **members)
-{
-    TALLOC_CTX *tmp_ctx;
-    int ret;
-    size_t count;
-    struct ldb_result *res;
-    struct ldb_dn *base_dn;
-    char *filter;
-    char *sanitized_name;
-    const char *attrs[] = SYSDB_PW_ATTRS;
-    struct ldb_message **msgs;
-
-    tmp_ctx = talloc_new(NULL);
-    if (tmp_ctx == NULL) {
-        return ENOMEM;
-    }
-
-    base_dn = sysdb_base_dn(dom->sysdb, tmp_ctx);
-    if (base_dn == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "sysdb_base_dn failed.\n");
-        ret = ENOMEM;
-        goto done;
-    }
-
-    ret = sss_filter_sanitize(tmp_ctx, ldb_dn_get_linearized(group_dn),
-                              &sanitized_name);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "Failed to sanitize the given name:'%s'.\n",
-              ldb_dn_get_linearized(group_dn));
-        goto done;
-    }
-
-    filter = talloc_asprintf(tmp_ctx, "(&("SYSDB_UC")("SYSDB_MEMBEROF"=%s))",
-                             sanitized_name);
-    if (filter == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "talloc_asprintf failed.\n");
-        ret = ENOMEM;
-        goto done;
-    }
-
-    ret = sysdb_search_entry(tmp_ctx, dom->sysdb, base_dn, LDB_SCOPE_SUBTREE,
-                             filter, attrs, &count, &msgs);
-    if (ret != EOK) {
-        goto done;
-    }
-
-    res = talloc_zero(tmp_ctx, struct ldb_result);
-    if (res == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "talloc_zero failed.\n");
-        ret = ENOMEM;
-        goto done;
-    }
-
-    res->count = count;
-    res->msgs = talloc_steal(res, msgs);
-
-    ret = EOK;
-
-done:
-    if (ret == EOK) {
-        *members = talloc_steal(mem_ctx, res);
-    } else if (ret == ENOENT) {
-        DEBUG(SSSDBG_TRACE_FUNC, "No such entry\n");
-    } else {
         DEBUG(SSSDBG_OP_FAILURE, "Error: %d (%s)\n", ret, strerror(ret));
     }
     talloc_free(tmp_ctx);

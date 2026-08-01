@@ -68,7 +68,8 @@ extern const char *debug_log_file;   /* only file name, excluding path */
     DEBUG_INIT(dbg_lvl, sss_logger_str[STDERR_LOGGER]); \
 } while (0)
 
-void sss_debug_backtrace_enable(bool enable);
+void sss_set_debug_backtrace_enable(bool enable);
+bool sss_get_debug_backtrace_enable(void);
 
 /* debug_convert_old_level() converts "old" style decimal notation
  * to bitmask composed of SSSDBG_*
@@ -195,6 +196,18 @@ void sss_debug_fn(const char *file,
                             (debug_level == SSSDBG_UNRESOLVED && \
                                             (level & (SSSDBG_FATAL_FAILURE | \
                                                       SSSDBG_CRIT_FAILURE))))
+
+/* The same as DEBUG but does nothing if requested debug level isn't set,
+ * thus avoiding logging to the backtrace in this case.
+ * Meant to be used in hot (performance sensitive) code paths only.
+ */
+#define DEBUG_CONDITIONAL(level, format, ...) do { \
+    if (DEBUG_IS_SET(level)) { \
+        sss_debug_fn(__FILE__, __LINE__, __FUNCTION__, \
+                     level, \
+                     format, ##__VA_ARGS__); \
+    } \
+} while (0)
 
 
 /* not to be used explictly, use 'DEBUG_INIT' instead */

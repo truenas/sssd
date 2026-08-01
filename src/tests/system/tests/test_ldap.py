@@ -14,209 +14,71 @@ from sssd_test_framework.roles.ldap import LDAP
 from sssd_test_framework.topology import KnownTopology
 
 
-@pytest.mark.ticket(bz=[795044, 1695574])
-@pytest.mark.importance("critical")
-@pytest.mark.authentication
-@pytest.mark.parametrize("modify_mode", ["exop", "ldap_modify"])
-@pytest.mark.topology(KnownTopology.LDAP)
-def test_ldap__password_change(client: Client, ldap: LDAP, modify_mode: str):
-    """
-    :title: Change password with "ldap_pwmodify_mode" set to @modify_mode
-    :setup:
-        1. Add user to LDAP, set his password
-        2. Allow user to change his password
-        3. Set "ldap_pwmodify_mode"
-        4. Start SSSD
-    :steps:
-        1. Authenticate user with old password
-        2. Change password of user to new password
-        3. Authenticate user with new password
-        4. Authenticate user with old password
-    :expectedresults:
-        1. User is authenticated
-        2. Password is changed successfully
-        3. User is authenticated
-        4. User is not authenticated
-    :customerscenario: True
-    """
-    user = "user1"
-    old_pass = "Secret123"
-    new_pass = "New_password123"
-
-    ldap.user(user).add(password=old_pass)
-    ldap.aci.add('(targetattr="userpassword")(version 3.0; acl "pwp test"; allow (all) userdn="ldap:///self";)')
-
-    client.sssd.domain["ldap_pwmodify_mode"] = modify_mode
-    client.sssd.start()
-
-    assert client.auth.ssh.password(user, old_pass), "Authentication with old correct password failed"
-
-    assert client.auth.passwd.password(user, old_pass, new_pass), "Password change was not successful"
-
-    assert client.auth.ssh.password(user, new_pass), "Authentication with new correct password failed"
-    assert not client.auth.ssh.password(user, old_pass), "Authentication with old incorrect password did not fail"
-
-
-@pytest.mark.ticket(bz=[795044, 1695574])
-@pytest.mark.parametrize("modify_mode", ["exop", "ldap_modify"])
-@pytest.mark.topology(KnownTopology.LDAP)
-def test_ldap__password_change_new_passwords_do_not_match(client: Client, ldap: LDAP, modify_mode: str):
-    """
-    :title: Change password with "ldap_pwmodify_mode" set to @modify_mode, but retyped password do not match
-    :setup:
-        1. Add user to LDAP, set his password
-        2. Allow user to change his password
-        3. Set "ldap_pwmodify_mode"
-        4. Start SSSD
-    :steps:
-        1. Change password to new password, but retyped password is different
-    :expectedresults:
-        1. Password change is not successful
-    :customerscenario: True
-    """
-    ldap.user("user1").add(password="Secret123")
-    ldap.aci.add('(targetattr="userpassword")(version 3.0; acl "pwp test"; allow (all) userdn="ldap:///self";)')
-
-    client.sssd.domain["ldap_pwmodify_mode"] = modify_mode
-    client.sssd.start()
-
-    assert not client.auth.passwd.password(
-        "user1", "Secret123", "Red123", "Hat000"
-    ), "Password changed successfully, which is not expected"
-
-
-@pytest.mark.ticket(bz=[795044, 1695574, 1795220])
-@pytest.mark.parametrize("modify_mode", ["exop", "ldap_modify"])
-@pytest.mark.topology(KnownTopology.LDAP)
-def test_ldap__password_change_new_password_does_not_meet_complexity_requirements(
-    client: Client, ldap: LDAP, modify_mode: str
-):
-    """
-    :title: Change password to lower-case letters, password check fail
-    :setup:
-        1. Add user to LDAP, set his password
-        2. Allow user to change his password
-        3. Set "passwordCheckSyntax" to "on"
-        4. Set "ldap_pwmodify_mode"
-        5. Start SSSD
-    :steps:
-        1. Change password to new password, but all letters are lower-case
-        2. Check logs
-    :expectedresults:
-        1. Password change failed
-        2. Password change failure is logged
-    :customerscenario: True
-    """
-    ldap.user("user1").add(password="Secret123")
-    ldap.aci.add('(targetattr="userpassword")(version 3.0; acl "pwp test"; allow (all) userdn="ldap:///self";)')
-    ldap.ldap.modify("cn=config", replace={"passwordCheckSyntax": "on"})
-
-    client.sssd.domain["ldap_pwmodify_mode"] = modify_mode
-    client.sssd.start()
-
-    assert not client.auth.passwd.password(
-        "user1", "Secret123", "red_32"
-    ), "Password changed successfully, which is not expected"
-
-    assert (
-        "pam_sss(passwd:chauthtok): User info message: Password change failed."
-        in client.host.ssh.run("journalctl").stdout
-    )
-
-
-@pytest.mark.ticket(bz=[1695574, 1795220])
-@pytest.mark.parametrize("modify_mode", ["exop", "ldap_modify"])
-@pytest.mark.topology(KnownTopology.LDAP)
-def test_ldap__password_change_failed_current_password(client: Client, ldap: LDAP, modify_mode: str):
-    """
-    :title: Password change failed because an incorrect password was used
-    :setup:
-        1. Add user to LDAP, set his password
-        2. Allow user to change his password
-        3. Set "ldap_pwmodify_mode"
-        4. Start SSSD
-    :steps:
-        1. Change password to new password, but enter wrong password
-    :expectedresults:
-        1. Password change is not successful
-    :customerscenario: True
-    """
-    ldap.user("user1").add(password="Secret123")
-    ldap.aci.add('(targetattr="userpassword")(version 3.0; acl "pwp test"; allow (all) userdn="ldap:///self";)')
-
-    client.sssd.domain["ldap_pwmodify_mode"] = modify_mode
-    client.sssd.start()
-
-    assert not client.auth.passwd.password("user1", "wrong123", "Newpass123"), "Password change did not fail"
-
-
+@pytest.mark.importance("low")
 @pytest.mark.ticket(bz=[1067476, 1065534])
 @pytest.mark.topology(KnownTopology.LDAP)
-def test_ldap__authenticate_user_with_whitespace_prefix_in_userid(client: Client, ldap: LDAP):
+def test_ldap__user_login_with_whitespace_prefix_in_userid(client: Client, ldap: LDAP):
     """
-    :title: user with a whitespace at beginning is able to login and "id"
+    :title: Authenticate with a user containing a blank space in the userid
+    :description: This can only be tested on LDAP because most directories have
+    constraints on the values, protecting the integrity of the data. This scenario
+    is most likely created migrating and, or upgrading old databases.
     :setup:
-        1. Add users " space1" and "user1" to LDAP
-        2. Set uids and passwords to users
-        3. Clear memcache, logs and db
-        4. Start SSSD
+        1. Add users " space1" and "user1"
+        2. Start SSSD
     :steps:
-        1. Fetch user " space1" information using 'id'
-        2. Login user " space1" via ssh
-        3. Login user "space1" via ssh
-        4. Fetch "user1" user information using 'id'
-        5. Fetch " user1" user information using 'id'
+        1. Lookup user " space1"
+        2. Login user " space1"
+        3. Login user "space1"
+        4. Lookup "user1" user
+        5. Lookup " user1" user
     :expectedresults:
-        1. " space1" is fetched and has correct id
-        2. " space1" is able to login
-        3. "space1" is not able to login
-        4. "user1" is fetched and has correct id
-        5. " user1" is not fetched
+        1. " space1" is found and has correct id
+        2. " space1" is able to log in
+        3. "space1" is not able to log in
+        4. "user1" is found and has correct id
+        5. " user1" is not found
     :customerscenario: True
     """
     ldap.user(" space1").add(uid=10011, password="Secret123")
     ldap.user("user1").add(uid=10012, password="Secret123")
-    client.sssd.clear(db=True, memcache=True, logs=True)
     client.sssd.start()
 
     result = client.tools.id(" space1")
     assert result is not None, "User ' space1' was not found"
     assert result.user.id == 10011, "User ' space1' has wrong id"
 
-    assert client.auth.ssh.password(" space1", "Secret123"), "Authentication for user ' space1' failed"
-    assert not client.auth.ssh.password("space1", "Secret123"), "Authentication for user 'space1' did not fail"
+    assert client.auth.ssh.password(" space1", "Secret123"), "User ' space1' login failed!"
+    assert not client.auth.ssh.password("space1", "Secret123"), "User 'space1' login should have failed!"
 
     result = client.tools.id("user1")
-    assert result is not None, "User 'user1' was not found"
-    assert result.user.id == 10012, "User 'user1' has wrong id"
+    assert result is not None, "User 'user1' not found!"
+    assert result.user.id == 10012, "User 'user1' has the wrong uid!"
 
     result = client.tools.id(" user1")
-    assert result is None, "User ' user1' was found, not expected"
+    assert result is None, "User ' user1' should not be found!"
 
 
 @pytest.mark.importance("high")
-@pytest.mark.authentication
 @pytest.mark.ticket(bz=1507035)
 @pytest.mark.topology(KnownTopology.LDAP)
 @pytest.mark.parametrize("method", ["su", "ssh"])
-def test_ldap__change_password_when_ldap_pwd_policy_is_set_shadow(client: Client, ldap: LDAP, method: str):
+def test_ldap__shadow_policy_user_login_then_changes_password(client: Client, ldap: LDAP, method: str):
     """
-    :title: Change password with shadow ldap password policy
+    :title: Change password with shadow ldap password policy is set to shadow
+    :description: Changing a password when the password policy is managed by the shadowAccount objectclass.
     :setup:
-        1. Allow user to change its own password in LDAP
-        2. Create LDAP user "tuser" with shadowLastChange = 0
-        3. Set ldap_pwd_policy to "shadow"
-        4. Set ldap_chpass_update_last_change to "True"
-        5. Start SSSD
+        1. Create user with shadowLastChange = 0, shadowMin = 0, shadowMax = 99999 and shadowWarning = 7
+        2. Set "ldap_pwd_policy = shadow" and "ldap_chpass_update_last_change = True"
+        3. Start SSSD
     :steps:
         1. Authenticate as "tuser" with old password
-        2. Autheticate as "tuser" with new password
+        2. Authenticate as "tuser" with new password
     :expectedresults:
-        1. Password was expired and new password was expected and provided
+        1. The password is expired, and the user is forced to change their password
         2. Authentication with new password was successful
     :customerscenario: True
     """
-    ldap.aci.add('(targetattr="userpassword")(version 3.0; acl "pwp test"; allow (all) userdn="ldap:///self";)')
     ldap.user("tuser").add(
         uid=999011, gid=999011, shadowMin=0, shadowMax=99999, shadowWarning=7, shadowLastChange=0, password="Secret123"
     )
@@ -225,89 +87,40 @@ def test_ldap__change_password_when_ldap_pwd_policy_is_set_shadow(client: Client
     client.sssd.domain["ldap_chpass_update_last_change"] = "True"
     client.sssd.start()
 
-    # Password is expired, change it
-    assert client.auth.parametrize(method).password_expired("tuser", "Secret123", "Redhat@321")
-
-    # Authenticate with new password
-    assert client.auth.parametrize(method).password("tuser", "Redhat@321")
-
-
-@pytest.mark.importance("medium")
-@pytest.mark.ticket(bz=1928648)
-@pytest.mark.topology(KnownTopology.LDAP)
-def test_ldap__network_timeout_parameters_shown_in_logs(client: Client, ldap: LDAP):
-    """
-    :title: Each timeout setting is properly logged in logs
-    :setup:
-        1. Add user
-        2. Start SSSD
-    :steps:
-        1. Check that "Setting 6 seconds timeout [ldap_network_timeout] for connecting" is in logs
-        2. Fetch information about user
-        3. Block LDAP traffic
-        4. Connect user over SSH
-        5. Logs should contain following timeout parameters
-             - ldap_opt_timeout
-             - ldap_search_timeout
-             - ldap_network_timeout
-             - dns_resolver_timeout
-    :expectedresults:
-        1. Timeout setting is stored in logs
-        2. User is found
-        3. LDAP traffic is blocked
-        4. User is unable to connect
-        5. The timeout parameters are in the logs
-    :customerscenario: True
-    """
-    ldap.user("user1").add(password="Secret123")
-    client.sssd.start()
-
-    log = client.fs.read(f"/var/log/sssd/sssd_{client.sssd.default_domain}.log")
-    assert "Setting 6 seconds timeout [ldap_network_timeout] for connecting" in log
-
-    assert client.tools.id("user1") is not None
-
-    client.firewall.outbound.drop_host(ldap)
-
-    with pytest.raises(Exception):
-        client.ssh("user1", "Secret123").connect()
+    assert client.auth.parametrize(method).password_expired(
+        "tuser", "Secret123", "Redhat@321"
+    ), "Password change failed!"
+    assert client.auth.parametrize(method).password("tuser", "Redhat@321"), "User 'tuser' login failed!"
 
     log = client.fs.read(f"/var/log/sssd/sssd_{client.sssd.default_domain}.log")
     for timeout in ["ldap_opt_timeout", "ldap_search_timeout", "ldap_network_timeout", "dns_resolver_timeout"]:
         assert timeout in log, f"Value '{timeout}' not found in logs"
 
 
+@pytest.mark.importance("critical")
 @pytest.mark.topology(KnownTopology.LDAP)
-def test_ldap__authenticate_user_with_empty_ldap_search_base(client: Client, ldap: LDAP):
+def test_ldap__search_base_is_discovered_and_defaults_to_root_dse(client: Client, ldap: LDAP):
     """
-    :title: Without ldapsearch base specified in sssd conf and rootDSE exists
+    :title: Search base is discovered and defaults to the directories root DSE
     :setup:
-        1. With sssd config set enumerate = True.
-        2. Set sssd config nss part with filter_groups and filter_users to root.
-        3. Add test user with password and make sure it can authenticate.
+        1. Create OU
+        2. Create user, and put the user object in the new OU
+        3. Start SSSD
     :steps:
-        1. Without ldap_search_base set when user authenticates certain logs
-            should appear in sssd domain logs.
-        2. Now set ldap_search_base in sssd config try with user authentication ,
-            in sssd domain logs sdap_set_config_options_with_rootdse should not appear.
+        1. Authenticate as user and check the logs
+        2. Add "ldap_search_base" to the configuration and cleanly restart SSSD
+        3. Authenticate as user and check the logs
     :expectedresults:
-        1. Certain logs should appear in sssd domain logs
-        2. In sssd domain logs sdap_set_config_options_with_rootdse should not appear.
+        1. User authentication is successful, and logs contain messages discovering root DSE
+        2. SSSD is configured and cleanly restarted
+        3. User authentication is successful, and logs contain no messages searching root DSE
     :customerscenario: False
     """
     base = ldap.ldap.naming_context
 
-    client.sssd.dom("test")["enumerate"] = "true"
-    client.sssd.config["nss"] = {
-        "filter_groups": "root",
-        "filter_users": "root",
-    }
-
     ou_users = ldap.ou("users").add()
     user = ldap.user("puser1", basedn=ou_users).add(uid=10001, gid=10001, password="Secret123")
 
-    client.sssd.stop()
-    client.sssd.clear()
     client.sssd.start()
 
     assert client.auth.ssh.password(user.name, "Secret123")
@@ -320,20 +133,21 @@ def test_ldap__authenticate_user_with_empty_ldap_search_base(client: Client, lda
         f"Setting option [ldap_group_search_base] to [{base}]",
         f"Setting option [ldap_netgroup_search_base] to [{base}]",
     ]:
-        assert doc in str(log)
+        assert doc in str(log), f"String '{doc}' not found in logs!"
     client.sssd.dom("test")["ldap_search_base"] = ldap.ldap.naming_context
 
     client.sssd.stop()
     client.sssd.clear()
     client.sssd.start()
 
-    assert client.auth.ssh.password("puser1", "Secret123")
+    assert client.auth.ssh.password("puser1", "Secret123"), "User 'puser1' login failed!"
     time.sleep(3)
 
     log = client.fs.read(client.sssd.logs.domain())
-    assert "sdap_set_config_options_with_rootdse" not in log
+    assert "sdap_set_config_options_with_rootdse" not in log, "sdap_set_config_options_with_rootdse found in logs!"
 
 
+@pytest.mark.importance("medium")
 @pytest.mark.topology(KnownTopology.LDAP)
 @pytest.mark.parametrize(
     "user_search_base, search_base",
@@ -343,39 +157,26 @@ def test_ldap__authenticate_user_with_empty_ldap_search_base(client: Client, lda
         ("ldap_netgroup_search_base", "ou=Netgroup,dc=ldap,dc=test"),
     ],
 )
-def test_ldap__authenticate_user_with_search_base_set(client: Client, ldap: LDAP, user_search_base, search_base):
+def test_ldap__search_base_is_discovered_and_defaults_to_root_dse_users_groups_and_netgroups(
+    client: Client, ldap: LDAP, user_search_base, search_base
+):
     """
-    :title: Without ldapsearch base and with ldap user search base specified
+    :title: Search base is discovered and defaults to the directories root DSE for users, groups and netgroups
     :setup:
-        1. With sssd config set enumerate = True.
-        2. Set sssd config nss part with filter_groups and filter_users to root.
-        3. Add test user with password and make sure it can authenticate.
+        1. Create People OU
+        2. Create user, and put the user object in the new OU
+        3. Configure SSSD with "user_search_base" and start SSSD
     :steps:
-        1. Set user_search_base to sssd config.
-        2. Set ldap_group_search_base to sssd config.
-        3. Set ldap_netgroup_search_base to sssd config.
-        4. With each search base there will be different logs generated in sssd domain logs.
+        1. Lookup user and authenticate as user and check the logs
     :expectedresults:
-        1. User_search_base should be set to sssd config.
-        2. Ldap_group_search_base should be set to sssd config.
-        3. Ldap_netgroup_search_base should be set to sssd config.
-        4. There will be different logs generated in sssd domain logs.
+        1. User authentication is successful, and logs contain messages setting ldap_x_search_base to the root DSE
     :customerscenario: False
     """
     base = ldap.ldap.naming_context
-
-    client.sssd.dom("test")["enumerate"] = "true"
-    client.sssd.dom("test")[user_search_base] = search_base
-    client.sssd.config["nss"] = {
-        "filter_groups": "root",
-        "filter_users": "root",
-    }
-
     ou_users = ldap.ou("People").add()
     user = ldap.user("puser1", basedn=ou_users).add(uid=10001, gid=10001, password="Secret123")
 
-    client.sssd.stop()
-    client.sssd.clear()
+    client.sssd.dom("test")[user_search_base] = search_base
     client.sssd.start()
 
     result = client.tools.getent.passwd(user.name)
@@ -394,7 +195,7 @@ def test_ldap__authenticate_user_with_search_base_set(client: Client, ldap: LDAP
                 f"Setting option [ldap_group_search_base] to [{base}]",
                 f"Setting option [ldap_netgroup_search_base] to [{base}]",
             ]:
-                assert doc in str(log)
+                assert doc in str(log), f"String '{doc}' not found in logs!"
         case "ldap_group_search_base":
             for doc in [
                 "Got rootdse",
@@ -402,7 +203,7 @@ def test_ldap__authenticate_user_with_search_base_set(client: Client, ldap: LDAP
                 f"Setting option [ldap_user_search_base] to [{base}]",
                 f"Setting option [ldap_netgroup_search_base] to [{base}]",
             ]:
-                assert doc in str(log)
+                assert doc in str(log), f"String '{doc}' not found in logs!"
         case "ldap_netgroup_search_base":
             for doc in [
                 "Got rootdse",
@@ -410,69 +211,59 @@ def test_ldap__authenticate_user_with_search_base_set(client: Client, ldap: LDAP
                 f"Setting option [ldap_user_search_base] to [{base}]",
                 f"Setting option [ldap_group_search_base] to [{base}]",
             ]:
-                assert doc in str(log)
+                assert doc in str(log), f"String '{doc}, not found in logs!"
 
 
 @pytest.mark.topology(KnownTopology.LDAP)
-def test_ldap__lookup_user_default_naming_context_and_no_search_base(client: Client, ldap: LDAP):
+def test_ldap__lookup_user_with_search_bases(client: Client, ldap: LDAP):
     """
-    :title: Without ldapsearch base and default namingContexts
+    :title: Looking up with no search base configured
     :setup:
-        1. With sssd config set enumerate = True.
-        2. Set sssd config nss part with filter_groups and filter_users to root.
-        3. Add test user with password and make sure it can authenticate.
+        1. Create People OU
+        2. Create user and put the user object into the OU
+        3. Start SSSD
     :steps:
-        1. Sssd without ldapsearch base and default namingContexts.
-        2. Sssd should generate some logs when try to authenticate with users.
+        1. Lookup user
+        2. Look at logs
     :expectedresults:
-        1. Sssd should work without ldapsearch base and default namingContexts.
-        2. Sssd should generate some logs when try to authenticate with users.
+        1. User is found
+        2. Strings pertaining to rootdse search base discovery are found
     :customerscenario: False
     """
     base = ldap.ldap.naming_context
 
-    client.sssd.dom("test")["enumerate"] = "true"
-    client.sssd.config["nss"] = {
-        "filter_groups": "root",
-        "filter_users": "root",
-    }
-
     ou_users = ldap.ou("People").add()
     user = ldap.user("puser1", basedn=ou_users).add(uid=10001, gid=10001, password="Secret123")
 
-    client.sssd.stop()
-    client.sssd.clear()
     client.sssd.start()
 
     result = client.tools.getent.passwd(user.name)
-    assert result is not None
-    assert result.name == user.name
+    assert result is not None, "User not found!"
+    assert result.name == user.name, "Username is not correct!"
     time.sleep(3)
 
     log = client.fs.read(client.sssd.logs.domain())
-    assert "Got rootdse" in log
-    assert "Using value from [defaultNamingContext] as naming context" in log
-    assert f"Setting option [ldap_search_base] to [{base}]" in log
+    assert "Got rootdse" in log, "Unable to find rootDSE!"
+    assert "Using value from [defaultNamingContext] as naming context" in log, "Unable to find naming context!"
+    assert f"Setting option [ldap_search_base] to [{base}]" in log, "Unable to set ldap_search_base!"
 
 
+@pytest.mark.importance("low")
 @pytest.mark.topology(KnownTopology.LDAP)
 @pytest.mark.parametrize("user_search_base", ["dc=ldap,dc=test", "dc=shanks,dc=com"])
-def test_ldap__lookup_user_multiple_naming_contexts_and_no_search_base(client: Client, ldap: LDAP, user_search_base):
+def test_ldap__lookup_and_authenticate_as_user_with_different_object_search_bases(
+    client: Client, ldap: LDAP, user_search_base
+):
     """
-    :title: Without ldapsearch base and multiple namingContexts
+    :title: Looking up and authenticating as a user when the default, user and group search bases are different
     :setup:
-        1. With sssd config set enumerate = True.
-        2. Set sssd config nss part with filter_groups and filter_users to root.
-        3. Add test user with password and make sure it can authenticate.
+        1. Create People OU
+        2. Create user and put the user object into the new OU
+        3. Configure "ldap_search_base", "ldap_user|group_search_base" and start SSSD
     :steps:
-        1. Sssd with user_search_base "dc=ldap,dc=test"
-        2. Sssd with user_search_base "dc=shanks,dc=com"
-        3. With both the cases sssd authentication should work when we configure it with ldap_search_base,
-            ldap_user_search_base, ldap_group_search_base.
+        1. Lookup and authenticate as user
     :expectedresults:
-        1. Sssd should be configured user_search_base "dc=ldap,dc=test"
-        2. Sssd should be configured user_search_base "dc=shanks,dc=com"
-        3. User authentication should be success with both the cases.
+        1. User lookup and authentication are successful
     :customerscenario: False
     """
     base = ldap.ldap.naming_context
@@ -480,20 +271,96 @@ def test_ldap__lookup_user_multiple_naming_contexts_and_no_search_base(client: C
     ou_users = ldap.ou("People").add()
     user = ldap.user("puser1", basedn=ou_users).add(uid=10001, gid=10001, password="Secret123")
 
-    client.sssd.dom("test")["enumerate"] = "true"
     client.sssd.dom("test")["ldap_search_base"] = user_search_base
     client.sssd.dom("test")["ldap_user_search_base"] = f"ou=People,{base}"
     client.sssd.dom("test")["ldap_group_search_base"] = f"ou=Groups,{base}"
-    client.sssd.config["nss"] = {
-        "filter_groups": "root",
-        "filter_users": "root",
-    }
 
-    client.sssd.stop()
-    client.sssd.clear()
     client.sssd.start()
 
     result = client.tools.getent.passwd(user.name)
-    assert result is not None
-    assert result.name == user.name
-    assert client.auth.ssh.password(user.name, "Secret123")
+    assert result is not None, "User is not found!"
+    assert result.name == user.name, "Username is not correct!"
+    assert client.auth.ssh.password(user.name, "Secret123"), "User login failed!"
+
+
+@pytest.mark.ticket(jira="RHEL-55993")
+@pytest.mark.importance("critical")
+@pytest.mark.parametrize(
+    "modify_mode, expected, err_msg",
+    [("exop", 3, "Expected login failure"), ("exop_force", 3, "Expected password change request")],
+)
+@pytest.mark.topology(KnownTopology.LDAP)
+def test_ldap__user_cannot_login_when_no_remaining_grace_logins(
+    client: Client, ldap: LDAP, modify_mode: str, expected: int, err_msg: str
+):
+    """
+    :title: Password change when no grace logins left
+    :description: Typically the LDAP extended operation to change a password
+    requires an authenticated bind, even if the data send with the extended
+    operation contains the old password. If the old password is expired and
+    there are no grace logins left an authenticated bind is not possible anymore
+    and as a result it is not possible for the user to change their password.
+    With 'exop' SSSD will not try to ask the user for new credentials while with
+    'exop_force' SSSD will ask for new credentials and will try to run the password
+    change extended operation.
+    :setup:
+        1. Set "passwordMaxAge" to "1"
+        2. Set "passwordGraceLimit" to "0"
+        3. Add a user to LDAP
+        4. Wait until the password is expired
+        5. Set "ldap_pwmodify_mode"
+        6. Start SSSD
+    :steps:
+        1. Authenticate as the user with 'exop_force' set
+        2. Authenticate as the user with 'exop' set
+    :expectedresults:
+        1. With 'exop_force' expect a request to change the password
+        2. With 'exop' expect just a failed login
+    :customerscenario: False
+    """
+    ldap.ldap.modify("cn=config", replace={"passwordMaxAge": "1", "passwordGraceLimit": "0"})
+    ldap.user("user1").add(password="Secret123").password_change_at_logon(password="Secret123")
+
+    client.sssd.domain["ldap_pwmodify_mode"] = modify_mode
+    client.sssd.start()
+
+    rc, _, _, _ = client.auth.ssh.password_with_output("user1", "Secret123")
+    assert rc == expected, err_msg
+
+
+@pytest.mark.importance("low")
+@pytest.mark.topology(KnownTopology.LDAP)
+def test_ldap__enumeration_and_group_with_hash_in_name(client: Client, ldap: LDAP):
+    """
+    :title: getent shows groups with '#' in the name
+    :setup:
+        1. Create group with # in the name
+        2. Create group without # in the name
+        3. Enable enumeration
+    :steps:
+        1. Wait for enumeration to complete
+        2. check output of `getent group -s sss`
+    :expectedresults:
+        1. Enumeration task finishes
+        2. Both groups are in the `getent` output
+    :customerscenario: False
+    """
+    group1 = ldap.group("my#group").add()
+    group2 = ldap.group("my_group").add()
+    client.sssd.clear(db=True, memcache=True, logs=True)
+    client.sssd.domain["enumerate"] = "True"
+    client.sssd.domain["ldap_enumeration_refresh_offset"] = "1"
+    client.sssd.restart()
+
+    timeout = time.time() + 60
+    logfile = "/var/log/sssd/sssd_test.log"
+    while True:
+        log = client.fs.read(logfile)
+        if "[enum_groups_done]" in log:
+            break
+        assert timeout > time.time(), "Timeout while waiting for enumeration to finish"
+        time.sleep(1)
+    result = client.host.conn.exec(["getent", "group", "-s", "sss"])
+
+    assert group1.name in result.stdout, f"{group1.name} is not in getent output"
+    assert group2.name in result.stdout, f"{group2.name} is not in getent output"

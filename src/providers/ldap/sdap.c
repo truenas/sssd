@@ -96,7 +96,7 @@ static errno_t split_extra_attr(TALLOC_CTX *mem_ctx,
 {
     char *ldap_attr;
     char *sysdb_attr;
-    char *sep;
+    const char *sep;
 
     sep = strchr(conf_attr, ':');
     if (sep == NULL) {
@@ -445,7 +445,7 @@ int sdap_parse_entry(TALLOC_CTX *memctx,
         goto done;
     }
 
-    DEBUG(SSSDBG_TRACE_LIBS, "OriginalDN: [%s].\n", str);
+    DEBUG_CONDITIONAL(SSSDBG_TRACE_LIBS, "OriginalDN: [%s].\n", str);
     PROBE(SDAP_PARSE_ENTRY, "OriginalDN", str, strlen(str));
     ret = sysdb_attrs_add_string(attrs, SYSDB_ORIG_DN, str);
     ldap_memfree(str);
@@ -1224,6 +1224,11 @@ static errno_t sdap_set_search_base(struct sdap_options *opts,
     case SDAP_IPNETWORK_SEARCH_BASE:
         bases = &sdom->ipnetwork_search_bases;
         break;
+#ifdef BUILD_SUBID
+    case SDAP_SUBID_RANGES_SEARCH_BASE:
+        bases = &sdom->subid_ranges_search_bases;
+        break;
+#endif
     default:
         return EINVAL;
     }
@@ -1346,6 +1351,16 @@ errno_t sdap_set_config_options_with_rootdse(struct sysdb_attrs *rootdse,
                                    sdom->naming_context);
         if (ret != EOK) goto done;
     }
+
+#ifdef BUILD_SUBID
+    /* subid ranges */
+    if (!sdom->subid_ranges_search_bases) {
+        ret = sdap_set_search_base(opts, sdom,
+                                   SDAP_SUBID_RANGES_SEARCH_BASE,
+                                   sdom->naming_context);
+        if (ret != EOK) goto done;
+    }
+#endif
 
     ret = EOK;
 
@@ -1824,7 +1839,7 @@ done:
     }
     talloc_free(tmp_ctx);
 
-    DEBUG(SSSDBG_TRACE_FUNC, "Processing object %s\n", orig_name);
+    DEBUG_CONDITIONAL(SSSDBG_TRACE_FUNC, "Processing object %s\n", orig_name);
 
     *_primary_name = orig_name;
 

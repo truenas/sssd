@@ -208,6 +208,13 @@ static errno_t find_ipa_ext_memberships(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
+    user_dn = ldb_dn_copy(mem_ctx, result->msgs[0]->dn);
+    if (user_dn == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "ldb_dn_copy failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
     ret = sss_hash_create(tmp_ctx, 0, &group_hash);
     if (ret != HASH_SUCCESS) {
         DEBUG(SSSDBG_OP_FAILURE, "sss_hash_create failed.\n");
@@ -288,13 +295,6 @@ static errno_t find_ipa_ext_memberships(TALLOC_CTX *mem_ctx,
         c++;
     }
 
-    user_dn = ldb_dn_copy(mem_ctx, result->msgs[0]->dn);
-    if (user_dn == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "ldb_dn_copy failed.\n");
-        ret = ENOMEM;
-        goto done;
-    }
-
     ret = EOK;
 done:
     *_user_dn = user_dn;
@@ -305,20 +305,29 @@ done:
     return ret;
 }
 
-static errno_t add_ad_user_to_cached_groups(struct ldb_dn *user_dn,
+static errno_t add_ad_user_to_cached_groups(TALLOC_CTX *mem_ctx,
+                                            struct ldb_dn *user_dn,
                                             struct sss_domain_info *user_dom,
                                             struct sss_domain_info *group_dom,
                                             char **groups,
-                                            bool *missing_groups)
+                                            char  ***_missing_groups)
 {
     size_t c;
+    size_t d = 0;
     struct sysdb_attrs *user_attrs;
     size_t msgs_count;
     struct ldb_message **msgs;
     TALLOC_CTX *tmp_ctx;
     int ret;
-
-    *missing_groups = false;
+    const struct ldb_val *val;
+    char *user_name;
+    char **sysdb_ipa_group_memberships;
+    char **add_groups;
+    size_t add_groups_count;
+    char **del_groups;
+    char **mis_groups = NULL;
+    errno_t sret;
+    bool in_transaction = false;
 
     tmp_ctx = talloc_new(NULL);
     if (tmp_ctx == NULL) {
@@ -326,27 +335,108 @@ static errno_t add_ad_user_to_cached_groups(struct ldb_dn *user_dn,
         return ENOMEM;
     }
 
-    for (c = 0; groups[c] != NULL; c++) {
-        if (groups[c][0] == '\0') {
-            continue;
-        }
+    val = ldb_dn_get_rdn_val(user_dn);
+    if (val == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "user_dn has no RDN.\n");
+        ret = EINVAL;
+        goto done;
+    }
+    user_name = talloc_strndup(tmp_ctx, (char *) val->data, val->length);
+    if (user_name == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "Failed to copy user name.\n");
+        ret = ENOMEM;
+        goto done;
+    }
 
-        ret = sysdb_search_groups_by_orig_dn(tmp_ctx, group_dom, groups[c],
+    ret = sysdb_transaction_start(user_dom->sysdb);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_FATAL_FAILURE, "Failed to start update transaction\n");
+        goto done;
+    }
+
+    in_transaction = true;
+
+    ret = sysdb_get_direct_parents_ex(tmp_ctx, user_dom, group_dom,
+                                      SYSDB_MEMBER_USER, user_name,
+                                      SYSDB_ORIG_DN,
+                                      &sysdb_ipa_group_memberships);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "Failed to get current IPA group memberships "
+                                 "of user [%s].\n", user_name);
+        goto done;
+    }
+
+    ret = diff_string_lists(tmp_ctx, groups, sysdb_ipa_group_memberships,
+                            &add_groups, &del_groups, NULL);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "Failed to get difference in group lists.\n");
+        goto done;
+    }
+
+    user_attrs = sysdb_new_attrs(tmp_ctx);
+    if (user_attrs == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "sysdb_new_attrs failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    /* Add all new IPA groups to SYSDB_ORIG_MEMBEROF because they are most
+     * probably removed by the previous user update and mark all new groups as
+     * processed. */
+    for (c = 0; groups != NULL && groups[c] != NULL; c++) {
+        ret = sysdb_attrs_add_string(user_attrs, SYSDB_ORIG_MEMBEROF,
+                                     groups[c]);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_attrs_add_string failed.\n");
+            goto done;
+        }
+    }
+
+    for (add_groups_count = 0; add_groups[add_groups_count] != NULL; add_groups_count++);
+    if (DEBUG_IS_SET(SSSDBG_TRACE_ALL)) {
+        DEBUG(SSSDBG_TRACE_ALL, "New IPA groups [%zu].\n", c);
+
+        for (c = 0; sysdb_ipa_group_memberships[c] != NULL; c++);
+        DEBUG(SSSDBG_TRACE_ALL, "Cached IPA groups [%zu].\n", c);
+
+        DEBUG(SSSDBG_TRACE_ALL, "Groups to add [%zu].\n", add_groups_count);
+
+        for (c = 0; del_groups[c] != NULL; c++);
+        DEBUG(SSSDBG_TRACE_ALL, "Groups to delete [%zu].\n", c);
+    }
+
+    /* TODO: there is a similar functionality (adding and removing group
+     * memberships in sysdb_update_members_ex(), but the missing group feature
+     * is missing. It might be worth to evaluate if either the missing group
+     * feature can be added there or if group which are missing in the cache
+     * can bew handled differently here. */
+
+    for (c = 0; add_groups[c] != NULL; c++) {
+
+        ret = sysdb_search_groups_by_orig_dn(tmp_ctx, group_dom, add_groups[c],
                                              NULL, &msgs_count, &msgs);
         if (ret != EOK) {
             if (ret == ENOENT) {
                 DEBUG(SSSDBG_TRACE_ALL, "Group [%s] not in the cache.\n",
-                                         groups[c]);
-                *missing_groups = true;
+                                         add_groups[c]);
+                if (mis_groups == NULL) {
+                    mis_groups = talloc_array(tmp_ctx, char *,
+                                              add_groups_count + 1);
+                    if (mis_groups == NULL) {
+                        DEBUG(SSSDBG_OP_FAILURE,
+                              "Failed to allocate memory for missing groups.\n");
+                        ret = ENOMEM;
+                        goto done;
+                    }
+                }
+                /* add missing group to the list */
+                mis_groups[d++] = talloc_steal(mis_groups, add_groups[c]);
                 continue;
             } else {
                 DEBUG(SSSDBG_OP_FAILURE, "sysdb_search_entry failed.\n");
                 goto done;
             }
         }
-
-/* TODO? Do we have to remove members as well? I think not because the AD
- * query before removes all memberships. */
 
         ret = sysdb_mod_group_member(group_dom, user_dn, msgs[0]->dn,
                                      LDB_FLAG_MOD_ADD);
@@ -355,48 +445,78 @@ static errno_t add_ad_user_to_cached_groups(struct ldb_dn *user_dn,
             goto done;
         }
 
-        user_attrs = sysdb_new_attrs(tmp_ctx);
-        if (user_attrs == NULL) {
-            DEBUG(SSSDBG_OP_FAILURE, "sysdb_new_attrs failed.\n");
-            ret = ENOMEM;
-            goto done;
-        }
+    }
 
-        ret = sysdb_attrs_add_string(user_attrs, SYSDB_ORIG_MEMBEROF,
-                                     groups[c]);
+    for (c = 0; del_groups[c] != NULL; c++) {
+        ret = sysdb_search_groups_by_orig_dn(tmp_ctx, group_dom, del_groups[c],
+                                             NULL, &msgs_count, &msgs);
         if (ret != EOK) {
-            DEBUG(SSSDBG_OP_FAILURE, "sysdb_attrs_add_string failed.\n");
-            goto done;
+            if (ret == ENOENT) {
+                DEBUG(SSSDBG_TRACE_ALL,
+                      "Group [%s] not in the cache, skipping.\n",
+                      del_groups[c]);
+                continue;
+            } else {
+                DEBUG(SSSDBG_OP_FAILURE, "sysdb_search_entry failed.\n");
+                goto done;
+            }
         }
 
-        ret = sysdb_set_entry_attr(user_dom->sysdb, user_dn, user_attrs,
-                                   LDB_FLAG_MOD_ADD);
+        ret = sysdb_mod_group_member(group_dom, user_dn, msgs[0]->dn,
+                                     LDB_FLAG_MOD_DELETE);
         if (ret != EOK && ret != EEXIST) {
-            DEBUG(SSSDBG_OP_FAILURE, "sysdb_set_entry_attr failed.\n");
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "sysdb_mod_group_member failed to delete member.\n");
             goto done;
         }
+    }
 
-        /* mark group as already processed */
-        groups[c][0] = '\0';
+    /* Update SYSDB_ORIG_MEMBEROF with the IPA groups. */
+    ret = sysdb_set_entry_attr(user_dom->sysdb, user_dn, user_attrs,
+                               LDB_FLAG_MOD_ADD);
+    if (ret != EOK && ret != EEXIST) {
+        DEBUG(SSSDBG_OP_FAILURE, "Failed to add original IPA group DNs, ignored.\n");
+    }
+
+    ret = sysdb_transaction_commit(user_dom->sysdb);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Failed to commit transaction\n");
+        goto done;
+    }
+
+    in_transaction = false;
+
+    if (mis_groups == NULL) {
+        *_missing_groups = NULL;
+    } else {
+        mis_groups[d] = NULL;
+        *_missing_groups = talloc_steal(mem_ctx, mis_groups);
     }
 
     ret = EOK;
 done:
+    if (in_transaction) {
+        sret = sysdb_transaction_cancel(user_dom->sysdb);
+        if (sret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "Could not cancel transaction\n");
+        }
+    }
+
     talloc_free(tmp_ctx);
 
     return ret;
 }
 
-static struct tevent_req *ipa_add_ad_memberships_send(TALLOC_CTX *mem_ctx,
-                                             struct tevent_context *ev,
-                                             struct sdap_id_ctx *sdap_id_ctx,
-                                             struct ldb_dn *user_dn,
-                                             struct sss_domain_info *user_dom,
-                                             char **groups,
-                                             struct sss_domain_info *group_dom);
-static void ipa_add_ad_memberships_done(struct tevent_req *subreq);
+static struct tevent_req *ipa_add_trusted_memberships_send(TALLOC_CTX *mem_ctx,
+                                                           struct tevent_context *ev,
+                                                           struct sdap_id_ctx *sdap_id_ctx,
+                                                           struct ldb_dn *user_dn,
+                                                           struct sss_domain_info *user_dom,
+                                                           char **groups,
+                                                           struct sss_domain_info *group_dom);
+static void ipa_add_trusted_memberships_done(struct tevent_req *subreq);
 
-struct get_ad_membership_state {
+struct get_trusted_membership_state {
     struct tevent_context *ev;
     struct ipa_server_mode_ctx *server_mode;
     struct sdap_id_op *sdap_op;
@@ -411,26 +531,26 @@ struct get_ad_membership_state {
     struct sysdb_attrs **reply;
 };
 
-static void ipa_get_ad_memberships_connect_done(struct tevent_req *subreq);
+static void ipa_get_trusted_memberships_connect_done(struct tevent_req *subreq);
 static void ipa_get_ext_groups_done(struct tevent_req *subreq);
 static errno_t ipa_add_ext_groups_step(struct tevent_req *req);
-static errno_t ipa_add_ad_memberships_recv(struct tevent_req *req,
-                                           int *dp_error_out);
+static errno_t ipa_add_trusted_memberships_recv(struct tevent_req *req,
+                                                int *dp_error_out);
 
-struct tevent_req *ipa_get_ad_memberships_send(TALLOC_CTX *mem_ctx,
-                                        struct tevent_context *ev,
-                                        struct dp_id_data *ar,
-                                        struct ipa_server_mode_ctx *server_mode,
-                                        struct sss_domain_info *user_dom,
-                                        struct sdap_id_ctx *sdap_id_ctx,
-                                        const char *domain)
+struct tevent_req *ipa_get_trusted_memberships_send(TALLOC_CTX *mem_ctx,
+                                                    struct tevent_context *ev,
+                                                    struct dp_id_data *ar,
+                                                    struct ipa_server_mode_ctx *server_mode,
+                                                    struct sss_domain_info *user_dom,
+                                                    struct sdap_id_ctx *sdap_id_ctx,
+                                                    const char *domain)
 {
     int ret;
     struct tevent_req *req;
     struct tevent_req *subreq;
-    struct get_ad_membership_state *state;
+    struct get_trusted_membership_state *state;
 
-    req = tevent_req_create(mem_ctx, &state, struct get_ad_membership_state);
+    req = tevent_req_create(mem_ctx, &state, struct get_trusted_membership_state);
     if (req == NULL) {
         DEBUG(SSSDBG_OP_FAILURE, "tevent_req_create failed.\n");
         return NULL;
@@ -498,7 +618,7 @@ struct tevent_req *ipa_get_ad_memberships_send(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    tevent_req_set_callback(subreq, ipa_get_ad_memberships_connect_done, req);
+    tevent_req_set_callback(subreq, ipa_get_trusted_memberships_connect_done, req);
 
     return req;
 
@@ -515,12 +635,12 @@ done:
     return req;
 }
 
-static void ipa_get_ad_memberships_connect_done(struct tevent_req *subreq)
+static void ipa_get_trusted_memberships_connect_done(struct tevent_req *subreq)
 {
     struct tevent_req *req = tevent_req_callback_data(subreq,
                                                       struct tevent_req);
-    struct get_ad_membership_state *state = tevent_req_data(req,
-                                                struct get_ad_membership_state);
+    struct get_trusted_membership_state *state = tevent_req_data(req,
+                                                struct get_trusted_membership_state);
     int ret;
 
     ret = sdap_id_op_connect_recv(subreq, &state->dp_error);
@@ -564,8 +684,8 @@ static void ipa_get_ext_groups_done(struct tevent_req *subreq)
 {
     struct tevent_req *req = tevent_req_callback_data(subreq,
                                                       struct tevent_req);
-    struct get_ad_membership_state *state = tevent_req_data(req,
-                                                struct get_ad_membership_state);
+    struct get_trusted_membership_state *state = tevent_req_data(req,
+                                                struct get_trusted_membership_state);
     int ret;
     hash_table_t *ext_group_hash;
 
@@ -617,8 +737,8 @@ fail:
 
 static errno_t ipa_add_ext_groups_step(struct tevent_req *req)
 {
-    struct get_ad_membership_state *state = tevent_req_data(req,
-                                                struct get_ad_membership_state);
+    struct get_trusted_membership_state *state = tevent_req_data(req,
+                                                struct get_trusted_membership_state);
     struct ldb_dn *user_dn;
     int ret;
     char **groups = NULL;
@@ -632,22 +752,23 @@ static errno_t ipa_add_ext_groups_step(struct tevent_req *req)
         goto fail;
     }
 
-    if (groups == NULL) {
-        DEBUG(SSSDBG_TRACE_ALL, "No external groups memberships found.\n");
+    if (user_dn == NULL) {
+        DEBUG(SSSDBG_TRACE_ALL, "User [%s] not found in cache.\n",
+                                state->user_name);
         state->dp_error = DP_ERR_OK;
         return EOK;
     }
 
-    subreq = ipa_add_ad_memberships_send(state, state->ev, state->sdap_id_ctx,
-                                         user_dn, state->user_dom, groups,
-                                         state->sdap_id_ctx->be->domain);
+    subreq = ipa_add_trusted_memberships_send(state, state->ev, state->sdap_id_ctx,
+                                              user_dn, state->user_dom, groups,
+                                              state->sdap_id_ctx->be->domain);
     if (subreq == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "ipa_add_ad_memberships_send failed.\n");
+        DEBUG(SSSDBG_OP_FAILURE, "ipa_add_trusted_memberships_send failed.\n");
         ret = ENOMEM;
         goto fail;
     }
 
-    tevent_req_set_callback(subreq, ipa_add_ad_memberships_done, req);
+    tevent_req_set_callback(subreq, ipa_add_trusted_memberships_done, req);
     return EAGAIN;
 
 fail:
@@ -655,15 +776,15 @@ fail:
     return ret;
 }
 
-static void ipa_add_ad_memberships_done(struct tevent_req *subreq)
+static void ipa_add_trusted_memberships_done(struct tevent_req *subreq)
 {
     struct tevent_req *req = tevent_req_callback_data(subreq,
                                                       struct tevent_req);
-    struct get_ad_membership_state *state = tevent_req_data(req,
-                                                struct get_ad_membership_state);
+    struct get_trusted_membership_state *state = tevent_req_data(req,
+                                                struct get_trusted_membership_state);
     int ret;
 
-    ret = ipa_add_ad_memberships_recv(subreq, &state->dp_error);
+    ret = ipa_add_trusted_memberships_recv(subreq, &state->dp_error);
     talloc_zfree(subreq);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "ipa_add_ad_memberships request failed.\n");
@@ -676,10 +797,10 @@ static void ipa_add_ad_memberships_done(struct tevent_req *subreq)
     return;
 }
 
-errno_t ipa_get_ad_memberships_recv(struct tevent_req *req, int *dp_error_out)
+errno_t ipa_get_trusted_memberships_recv(struct tevent_req *req, int *dp_error_out)
 {
-    struct get_ad_membership_state *state = tevent_req_data(req,
-                                                struct get_ad_membership_state);
+    struct get_trusted_membership_state *state = tevent_req_data(req,
+                                                struct get_trusted_membership_state);
 
     TEVENT_REQ_RETURN_ON_ERROR(req);
 
@@ -690,23 +811,80 @@ errno_t ipa_get_ad_memberships_recv(struct tevent_req *req, int *dp_error_out)
     return EOK;
 }
 
-struct add_ad_membership_state {
+static errno_t filter_groups_by_attribute_name(char **groups,
+                                               const char *allowed_attr_name,
+                                               char ***filtered_groups)
+{
+    size_t c;
+    size_t d = 0;
+    char **tmp_list;
+    size_t name_len;
+
+    if (allowed_attr_name == NULL || filtered_groups == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "Missing required parameter.\n");
+        return EINVAL;
+    }
+
+    if (groups == NULL) {
+        *filtered_groups = NULL;
+        return EOK;
+    }
+
+    for (c = 0; groups[c] != NULL; c++);
+
+    /* To reduce the number of memory allocations the new list just "borrows"
+     * the items from the original list so we allocate the new list on the old
+     * one. */
+    tmp_list = talloc_array(groups, char *, c + 1);
+    if (tmp_list == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              "Failed to allocate memory for output list.\n");
+        return ENOMEM;
+    }
+
+    name_len = strlen(allowed_attr_name);
+    for (c = 0; groups[c] != NULL; c++) {
+        /* If the group's DN string starts with the allowed name followed by
+         * an '=' character it will be added to the new list, all other group
+         * DNs are ignored. */
+        if (strncasecmp(groups[c], allowed_attr_name, name_len) == 0
+                && groups[c][name_len] == '=') {
+            tmp_list[d] = groups[c];
+            d++;
+        } else {
+            DEBUG(SSSDBG_TRACE_ALL, "Ignoring [%s].\n", groups[c]);
+        }
+    }
+
+    tmp_list[d] = NULL;
+
+    *filtered_groups = tmp_list;
+
+    return EOK;
+}
+
+struct add_trusted_membership_state {
     struct tevent_context *ev;
     struct sdap_id_ctx *sdap_id_ctx;
     struct sdap_id_op *sdap_op;
     struct ldb_dn *user_dn;
     struct sss_domain_info *user_dom;
     struct sss_domain_info *group_dom;
+    char **orig_groups; /* a superset of `groups`, memory is shared */
     char **groups;
+    char **missing_groups;
     int dp_error;
     size_t iter;
     struct sdap_domain *group_sdom;
 };
 
-static void ipa_add_ad_memberships_connect_done(struct tevent_req *subreq);
-static void ipa_add_ad_memberships_get_next(struct tevent_req *req);
-static void ipa_add_ad_memberships_get_group_done(struct tevent_req *subreq);
-static struct tevent_req *ipa_add_ad_memberships_send(TALLOC_CTX *mem_ctx,
+static void ipa_add_trusted_memberships_connect_done(struct tevent_req *subreq);
+static void ipa_add_trusted_memberships_get_next(struct tevent_req *req);
+static void ipa_add_trusted_memberships_get_group_done(struct tevent_req *subreq);
+/* It is expected (and ever was) that the 'groups' parameter is not freed by
+ * the caller or runs our of scope before the ipa_add_trusted_memberships
+ * request is finished. */
+static struct tevent_req *ipa_add_trusted_memberships_send(TALLOC_CTX *mem_ctx,
                                              struct tevent_context *ev,
                                              struct sdap_id_ctx *sdap_id_ctx,
                                              struct ldb_dn *user_dn,
@@ -717,10 +895,9 @@ static struct tevent_req *ipa_add_ad_memberships_send(TALLOC_CTX *mem_ctx,
     int ret;
     struct tevent_req *req;
     struct tevent_req *subreq;
-    struct add_ad_membership_state *state;
-    bool missing_groups = false;
+    struct add_trusted_membership_state *state;
 
-    req = tevent_req_create(mem_ctx, &state, struct add_ad_membership_state);
+    req = tevent_req_create(mem_ctx, &state, struct add_trusted_membership_state);
     if (req == NULL) {
         DEBUG(SSSDBG_OP_FAILURE, "tevent_req_create failed.\n");
         return NULL;
@@ -731,7 +908,27 @@ static struct tevent_req *ipa_add_ad_memberships_send(TALLOC_CTX *mem_ctx,
     state->sdap_id_ctx = sdap_id_ctx;
     state->user_dn = user_dn;
     state->group_dom = group_dom;
-    state->groups = groups;
+    state->orig_groups = groups;
+
+    /* This request will use groups_get_send() to lookup missing groups.
+     * groups_get_send() can currently only lookup "proper" groups which
+     * besides other items means that the group name must be stored under the
+     * LDAP attribute given by the 'ldap_group_name' option. So currently it
+     * does not make sense to try to lookup other objects where the RDN
+     * attribute name is different than this value because those will always
+     * be treated as missing in the cache and always trigger an LDAP search
+     * which will fail. This will typically happen for iPAAssociation objects
+     * which are used to connect users and hosts with HBAC and sudo rules.
+     * If in future a more generic search is used this filter can be removed.
+     */
+    ret = filter_groups_by_attribute_name(groups,
+                                          state->sdap_id_ctx->opts->group_map[SDAP_AT_GROUP_NAME].name,
+                                          &state->groups);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "Failed to filter group DN list.\n");
+        goto done;
+    }
+
     state->dp_error = -1;
     state->iter = 0;
     state->group_sdom = sdap_domain_get(sdap_id_ctx->opts, group_dom);
@@ -740,14 +937,14 @@ static struct tevent_req *ipa_add_ad_memberships_send(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    ret = add_ad_user_to_cached_groups(user_dn, user_dom, group_dom, groups,
-                                       &missing_groups);
+    ret = add_ad_user_to_cached_groups(state, user_dn, user_dom, group_dom,
+                                       state->groups, &state->missing_groups);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "add_ad_user_to_cached_groups failed.\n");
         goto done;
     }
 
-    if (!missing_groups) {
+    if (state->missing_groups == NULL) {
         DEBUG(SSSDBG_TRACE_ALL, "All groups found in cache.\n");
         ret = EOK;
         goto done;
@@ -768,7 +965,7 @@ static struct tevent_req *ipa_add_ad_memberships_send(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    tevent_req_set_callback(subreq, ipa_add_ad_memberships_connect_done, req);
+    tevent_req_set_callback(subreq, ipa_add_trusted_memberships_connect_done, req);
 
     return req;
 
@@ -785,12 +982,12 @@ done:
     return req;
 }
 
-static void ipa_add_ad_memberships_connect_done(struct tevent_req *subreq)
+static void ipa_add_trusted_memberships_connect_done(struct tevent_req *subreq)
 {
     struct tevent_req *req = tevent_req_callback_data(subreq,
                                                       struct tevent_req);
-    struct add_ad_membership_state *state = tevent_req_data(req,
-                                                struct add_ad_membership_state);
+    struct add_trusted_membership_state *state = tevent_req_data(req,
+                                                struct add_trusted_membership_state);
     int ret;
 
     ret = sdap_id_op_connect_recv(subreq, &state->dp_error);
@@ -810,36 +1007,32 @@ static void ipa_add_ad_memberships_connect_done(struct tevent_req *subreq)
     }
 
     state->iter = 0;
-    ipa_add_ad_memberships_get_next(req);
+    ipa_add_trusted_memberships_get_next(req);
 }
 
-static void ipa_add_ad_memberships_get_next(struct tevent_req *req)
+static void ipa_add_trusted_memberships_get_next(struct tevent_req *req)
 {
-    struct add_ad_membership_state *state = tevent_req_data(req,
-                                                struct add_ad_membership_state);
+    struct add_trusted_membership_state *state = tevent_req_data(req,
+                                                struct add_trusted_membership_state);
     struct tevent_req *subreq;
     struct ldb_dn *group_dn;
     int ret;
     const struct ldb_val *val;
-    bool missing_groups;
     const char *fq_name;
     char *tmp_str;
 
-    while (state->groups[state->iter] != NULL
-            && state->groups[state->iter][0] == '\0') {
-        state->iter++;
-    }
-
-    if (state->groups[state->iter] == NULL) {
-        ret = add_ad_user_to_cached_groups(state->user_dn, state->user_dom,
+    if (state->missing_groups[state->iter] == NULL) {
+        talloc_zfree(state->missing_groups);
+        ret = add_ad_user_to_cached_groups(state, state->user_dn,
+                                           state->user_dom,
                                            state->group_dom, state->groups,
-                                           &missing_groups);
+                                           &state->missing_groups);
         if (ret != EOK) {
             DEBUG(SSSDBG_OP_FAILURE, "add_ad_user_to_cached_groups failed.\n");
             goto fail;
         }
 
-        if (missing_groups) {
+        if (state->missing_groups != NULL) {
             /* this might be HBAC or sudo rule */
             DEBUG(SSSDBG_FUNC_DATA, "There are unresolved external group "
                                        "memberships even after all groups "
@@ -851,7 +1044,7 @@ static void ipa_add_ad_memberships_get_next(struct tevent_req *req)
     }
 
     group_dn = ldb_dn_new(state, sysdb_ctx_get_ldb(state->group_dom->sysdb),
-                          state->groups[state->iter]);
+                          state->missing_groups[state->iter]);
     if (group_dn == NULL) {
         DEBUG(SSSDBG_OP_FAILURE, "ldb_dn_new failed.\n");
         ret = ENOMEM;
@@ -861,7 +1054,7 @@ static void ipa_add_ad_memberships_get_next(struct tevent_req *req)
     val = ldb_dn_get_rdn_val(group_dn);
     if (val == NULL || val->data == NULL) {
         DEBUG(SSSDBG_OP_FAILURE,
-              "Invalid group DN [%s].\n", state->groups[state->iter]);
+              "Invalid group DN [%s].\n", state->missing_groups[state->iter]);
         ret = EINVAL;
         goto fail;
     }
@@ -890,19 +1083,19 @@ static void ipa_add_ad_memberships_get_next(struct tevent_req *req)
         goto fail;
     }
 
-    tevent_req_set_callback(subreq, ipa_add_ad_memberships_get_group_done, req);
+    tevent_req_set_callback(subreq, ipa_add_trusted_memberships_get_group_done, req);
     return;
 
 fail:
     tevent_req_error(req, ret);
 }
 
-static void ipa_add_ad_memberships_get_group_done(struct tevent_req *subreq)
+static void ipa_add_trusted_memberships_get_group_done(struct tevent_req *subreq)
 {
     struct tevent_req *req = tevent_req_callback_data(subreq,
                                                       struct tevent_req);
-    struct add_ad_membership_state *state = tevent_req_data(req,
-                                                struct add_ad_membership_state);
+    struct add_trusted_membership_state *state = tevent_req_data(req,
+                                                struct add_trusted_membership_state);
     int ret;
 
     ret = groups_get_recv(subreq, &state->dp_error, NULL);
@@ -916,14 +1109,14 @@ static void ipa_add_ad_memberships_get_group_done(struct tevent_req *subreq)
     }
 
     state->iter++;
-    ipa_add_ad_memberships_get_next(req);
+    ipa_add_trusted_memberships_get_next(req);
 }
 
-static errno_t ipa_add_ad_memberships_recv(struct tevent_req *req,
+static errno_t ipa_add_trusted_memberships_recv(struct tevent_req *req,
                                            int *dp_error_out)
 {
-    struct add_ad_membership_state *state = tevent_req_data(req,
-                                                struct add_ad_membership_state);
+    struct add_trusted_membership_state *state = tevent_req_data(req,
+                                                struct add_trusted_membership_state);
 
     TEVENT_REQ_RETURN_ON_ERROR(req);
 

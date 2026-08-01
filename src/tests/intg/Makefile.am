@@ -1,3 +1,4 @@
+AM_CFLAGS = $(my_CFLAGS)
 dist_noinst_DATA = \
     __init__.py \
     config.py.m4 \
@@ -11,30 +12,23 @@ dist_noinst_DATA = \
     ds.py \
     ds_openldap.py \
     ent.py \
-    ent_test.py \
     ldap_ent.py \
     ldap_local_override_test.py \
     util.py \
     test_enumeration.py \
     test_ldap.py \
     test_memory_cache.py \
-    test_session_recording.py \
-    test_ts_cache.py \
     test_netgroup.py \
-    test_sssctl.py \
     files_ops.py \
-    test_files_ops.py \
     test_files_provider.py \
     kdc.py \
     krb5utils.py \
     test_kcm.py \
-    test_pac_responder.py \
     data/ad_data.ldif \
     data/ad_schema.ldif \
     data/cert_schema.ldif \
     data/ssh_schema.ldif \
     data/sudo_schema.ldif \
-    test_pysss_nss_idmap.py \
     test_infopipe.py \
     test_ssh_pubkey.py \
     test_pam_responder.py \
@@ -43,8 +37,6 @@ dist_noinst_DATA = \
     conftest.py \
     sssd_hosts.py \
     sssd_nets.py \
-    test_confdb.py \
-    test_sss_cache.py \
     $(NULL)
 
 EXTRA_DIST = data/cwrap-dbus-system.conf.in

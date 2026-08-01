@@ -80,12 +80,22 @@ class sssdTools(object):
         if not hasattr(self, "_sssd_user"):
             cmd = self.multihost.run_command(
                 'systemctl show sssd --value --property User', raiseonerr=False)
-            if cmd.returncode == 0:
+            if cmd.returncode == 0 and cmd.stdout_text.strip():
                 self._sssd_user = cmd.stdout_text.strip()
             else:
                 self._sssd_user = 'root'
         return self._sssd_user
 
+    def retrieve_file_content(self, file_path):
+        """ Retrieve file content as string or empty string
+            :param str file_path: Path to the file to be retrieved
+            :return: str
+        """
+        try:
+            content = self.multihost.get_file_contents(file_path).decode('utf-8')
+        except IOError:
+            content = ""
+        return content
 
     def client_install_pkgs(self):
         """Install common required packages"""
@@ -200,27 +210,40 @@ class sssdTools(object):
                                                      target_service), 1)
 
     def update_resolv_conf(self, ip_addr):
-        """ Update /etc/resolv.conf with Windows AD IP address
+        """ Set nameserver to specific ip address (Like AD server)
 
-            :param str ip_addr: IP Address to be added in resolv.conf
+            :param str ip_addr: IP Address to be set
             :return: None
         """
-        self.multihost.log.info("Add ip addr %s in resolv.conf" % ip_addr)
-        nameserver = 'nameserver %s\n' % ip_addr
-        resolv_conf = self.multihost.get_file_contents('/etc/resolv.conf')
-        if isinstance(resolv_conf, bytes):
-            contents = resolv_conf.decode('utf-8')
+        self.multihost.log.info(f"Set dns to ip addr: {ip_addr}")
+        cmd = self.multihost.run_command(f'readlink /etc/resolv.conf', raiseonerr=False)
+        if 'stub-resolv.conf' in cmd.stdout_text:
+            # Try to change dns settings on a machine with systemd-resolved
+            self.set_dns_systemd_resolved(ip_addr)
         else:
-            contents = resolv_conf
-        contents = nameserver + contents.replace(nameserver, '')
-        # Chattr will not work on symlink (like from systemd resolved)
-        # so we ignore result
-        self.multihost.run_command("chattr -i /etc/resolv.conf", raiseonerr=False)
-        self.multihost.put_file_contents('/etc/resolv.conf', contents)
-        self.multihost.run_command("chattr +i /etc/resolv.conf", raiseonerr=False)
-        # Try to change dns settings on a machine with systemd.resolved
-        change_stub = f"sed -ie 's/#\?DNS=.*/DNS={ip_addr}/' /etc/systemd/resolved.conf"
-        self.multihost.run_command(change_stub, raiseonerr=False)
+            nameserver = 'nameserver %s\n' % ip_addr
+            resolv_conf = self.multihost.get_file_contents('/etc/resolv.conf')
+            if isinstance(resolv_conf, bytes):
+                contents = resolv_conf.decode('utf-8')
+            else:
+                contents = resolv_conf
+            contents = nameserver + contents.replace(nameserver, '')
+            # Chattr will not work on symlink (like from systemd resolved)
+            # so we ignore result
+            self.multihost.run_command("chattr -i /etc/resolv.conf", raiseonerr=False)
+            self.multihost.put_file_contents('/etc/resolv.conf', contents)
+            self.multihost.run_command("chattr +i /etc/resolv.conf", raiseonerr=False)
+
+    def set_dns_systemd_resolved(self, ip_addr):
+        """ Configure systemd-resolved with an IP address
+
+            :param str ip_addr: IP Address to be used
+            :return: None
+        """
+        self.multihost.log.info(f"Configuring systemd-resolved to use: {ip_addr}")
+        change_dns = rf"sed -ie 's/#\?DNS=.*/DNS={ip_addr}/'"
+        for x in ['/etc/systemd/resolved.conf', '/usr/lib/systemd/resolved.conf']:
+            self.multihost.run_command(f'{change_dns} {x}', raiseonerr=False)
         self.multihost.run_command(
             "systemctl restart systemd-resolved", raiseonerr=False
         )
@@ -354,6 +377,16 @@ class sssdTools(object):
             self.authselect()
             self.config_etckrb5(realm, krb_server)
             self.enable_kcm()
+
+
+    def update_remote_conf(self, conffile, section, parameters, action='add'):
+        """ Update configuration files on remote host """
+        tmpconf = tempfile.NamedTemporaryFile(suffix='remote.conf', delete=False)
+        self.multihost.transport.get_file(conffile, tmpconf.name)
+        self.update_conf(tmpconf.name, section, parameters, action)
+        self.multihost.transport.put_file(tmpconf.name, conffile)
+        os.unlink(tmpconf.name)
+
 
     def update_conf(self, conffile, section, parameters, action='add'):
         """ Update configuration files """
@@ -528,6 +561,8 @@ class sssdTools(object):
         # joining again and the error in log is misleading.
         cmd = self.multihost.run_command(
             f'realm leave {domainname} -v', log_stdout=raiseonerr, raiseonerr=False)
+        # Remove the keytab file to avoid the issue unexpected entries in keytab
+        self.multihost.run_command("rm -f /etc/krb5.keytab", raiseonerr=False)
         if cmd.returncode != 0 and "realm: Couldn't connect to realm service" in cmd.stderr_text:
             print("WARNING: realm leave timed out, retrying!")
             self.service_ctrl('restart', 'realmd')
@@ -809,8 +844,7 @@ class sssdTools(object):
         expect_script += 'send "' + retype_new_password + '\r"\n'
         expect_script += 'expect {\n'
         expect_script += '\ttimeout { set result_code 0 }\n'
-        expect_script += '\t"passwd: all authentication tokens updated ' \
-                         'successfully" { set result_code 3 }\n'
+        expect_script += '\t" updated successfully" { set result_code 3 }\n'
         expect_script += '\t"passwd: Authentication token is no longer ' \
                          'valid; new one required" { set result_code 4 }\n'
         expect_script += '\t"Sorry, passwords do not match." ' \
@@ -1129,13 +1163,22 @@ class sssdTools(object):
     def add_service_principals(self, spn_list):
         """ Add service principal to Windows AD """
         host = self.multihost.sys_hostname
+        res = self.multihost.run_command("net ads keytab --help")
+        has_add_update_ads = "add_update_ads" in res.stdout_text
+        if has_add_update_ads:
+            cmd = "net ads keytab add_update_ads"
+        else:
+            cmd = "net ads setspn add"
         for spn in spn_list:
-            cmd = "net ads keytab add_update_ads %s/%s "\
-                  "-U %s " % (spn, host, self.admin_user,)
             try:
-                self.multihost.run_command(cmd, stdin_text='Secret123')
+                self.multihost.run_command(f"{cmd} {spn}/{host} -U {self.admin_user}", stdin_text='Secret123')
             except subprocess.CalledProcessError:
                 pytest.fail("Failed to add %s Service principal" % (spn))
+
+        self.multihost.run_command("cat /etc/samba/smb.conf", raiseonerr=False)
+
+        if not has_add_update_ads:
+            self.multihost.run_command(f"net ads keytab create -U {self.admin_user}", stdin_text='Secret123')
 
     def remove_service_principals(self, spn_list):
         """ Remove service principal from AD """
@@ -2292,4 +2335,3 @@ class ADDNS(object):  # pylint: disable=useless-object-inheritance
             net = str(ip.split(".")[2]) + '.' + str(ip.split(".")[1]) + '.' + str(ip.split(".")[0]) + '.in-addr.arpa'
             ptr = str(ip.split(".")[3])
             self.ad_host.run_command(f"dnscmd.exe /recorddelete {net} {ptr} PTR /f", raiseonerr=False)
-

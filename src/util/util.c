@@ -560,6 +560,7 @@ errno_t del_string_from_list(const char *string,
 int domain_to_basedn(TALLOC_CTX *memctx, const char *domain, char **basedn)
 {
     const char *s;
+    const char *dot;
     char *dn;
     char *p;
     int l;
@@ -571,13 +572,13 @@ int domain_to_basedn(TALLOC_CTX *memctx, const char *domain, char **basedn)
     s = domain;
     dn = talloc_strdup(memctx, "dc=");
 
-    while ((p = strchr(s, '.'))) {
-        l = p - s;
+    while ((dot = strchr(s, '.'))) {
+        l = dot - s;
         dn = talloc_asprintf_append_buffer(dn, "%.*s,dc=", l, s);
         if (!dn) {
             return ENOMEM;
         }
-        s = p + 1;
+        s = dot + 1;
     }
     dn = talloc_strdup_append_buffer(dn, s);
     if (!dn) {
@@ -1100,4 +1101,84 @@ errno_t sss_getenv(TALLOC_CTX *mem_ctx,
     }
 
     return value != NULL ? EOK : ENOENT;
+}
+
+errno_t sss_parse_dns_uri(TALLOC_CTX *mem_ctx,
+                          const char *uri,
+                          struct sss_parsed_dns_uri **_parsed_uri)
+{
+    char *s, *p;
+    const char *start;
+    struct sss_parsed_dns_uri *parsed_uri;
+    errno_t ret = EOK;
+
+    if (uri == NULL || _parsed_uri == NULL) {
+        return EINVAL;
+    }
+
+    parsed_uri = talloc_zero(mem_ctx, struct sss_parsed_dns_uri);
+    if (parsed_uri == NULL) {
+        ret = ENOMEM;
+        goto fail;
+    }
+
+    start = uri;
+    while(isspace(start[0])) {
+        start++;
+    }
+
+    parsed_uri->data = talloc_strdup(parsed_uri, start);
+    if (parsed_uri->data == NULL) {
+        ret = ENOMEM;
+        goto fail;
+    }
+    s = parsed_uri->data;
+
+    /* scheme */
+    p = strstr(s, "://");
+    if (p != NULL) {
+        parsed_uri->scheme = s;
+        *p = '\000';
+        s = &p[3];
+    }
+
+    /* path part */
+    p = strchr(s, '/');
+    if (p != NULL) {
+        parsed_uri->path = &p[1];
+        *p = '\000';
+    }
+
+    p = strchr(s, '#');
+    if (p != NULL) {
+        parsed_uri->host = &p[1];
+        *p = '\000';
+    }
+
+    if (s[0] == '[') {
+        /* IPv6 address */
+        p = strstr(s, "]:");
+        if (p != NULL) {
+            ++p;
+        }
+    } else {
+        p = strchr(s, ':');
+    }
+    if (p != NULL) {
+        parsed_uri->port = &p[1];
+        *p = '\000';
+    }
+
+    parsed_uri->address = s;
+    if (parsed_uri->host == NULL) {
+        parsed_uri->host = parsed_uri->address;
+    }
+
+    *_parsed_uri = parsed_uri;
+    return EOK;
+
+ fail:
+    talloc_free(parsed_uri);
+    *_parsed_uri = NULL;
+    return ret;
 }

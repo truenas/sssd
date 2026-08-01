@@ -81,6 +81,7 @@ static errno_t pack_authtok(struct io_buffer *buf, size_t *rp,
         ret = sss_authtok_get_ccfile(tok, &data, &len);
         auth_token_length = len + 1;
         break;
+    case SSS_AUTHTOK_TYPE_PAM_STACKED:
     case SSS_AUTHTOK_TYPE_2FA_SINGLE:
         ret = sss_authtok_get_2fa_single(tok, &data, &len);
         auth_token_length = len + 1;
@@ -1020,4 +1021,3 @@ parse_krb5_child_response(TALLOC_CTX *mem_ctx, uint8_t *buf, ssize_t len,
     *_res = res;
     return EOK;
 }
-

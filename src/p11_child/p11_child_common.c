@@ -1,7 +1,7 @@
 /*
     SSSD
 
-    Helper child to commmunicate with SmartCard -- common code
+    Helper child to communicate with SmartCard -- common code
 
     Authors:
         Sumit Bose <sbose@redhat.com>
@@ -63,12 +63,12 @@ static int do_work(TALLOC_CTX *mem_ctx, enum op_mode mode, const char *ca_db,
                    const char *cert_b64, const char *pin,
                    const char *module_name, const char *token_name,
                    const char *key_id, const char *label, const char *uri,
-                   char **multi)
+                   time_t timeout, char **multi)
 {
     int ret;
     struct p11_ctx *p11_ctx;
 
-    ret = init_p11_ctx(mem_ctx, ca_db, wait_for_card, &p11_ctx);
+    ret = init_p11_ctx(mem_ctx, ca_db, wait_for_card, timeout, &p11_ctx);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "init_p11_ctx failed.\n");
         return ret;
@@ -148,6 +148,7 @@ int main(int argc, const char *argv[])
     int opt;
     poptContext pc;
     int dumpable = 1;
+    int backtrace = 1;
     int debug_fd = -1;
     const char *opt_logger = NULL;
     errno_t ret = 0;
@@ -165,6 +166,7 @@ int main(int argc, const char *argv[])
     char *label = NULL;
     char *cert_b64 = NULL;
     long chain_id = 0;
+    long timeout = -1;
     bool wait_for_card = false;
     char *uri = NULL;
 
@@ -173,6 +175,7 @@ int main(int argc, const char *argv[])
         SSSD_DEBUG_OPTS
         {"dumpable", 0, POPT_ARG_INT, &dumpable, 0,
          _("Allow core dumps"), NULL },
+        {"backtrace", 0, POPT_ARG_INT, &backtrace, 0, _("Enable debug backtrace"), NULL },
         {"debug-fd", 0, POPT_ARG_INT, &debug_fd, 0,
          _("An open file descriptor for the debug logs"), NULL},
         SSSD_LOGGER_OPTS
@@ -202,6 +205,8 @@ int main(int argc, const char *argv[])
          _("PKCS#11 URI to restrict selection"), NULL},
         {"chain-id", 0, POPT_ARG_LONG, &chain_id,
          0, _("Tevent chain ID used for logging purposes"), NULL},
+        {"timeout", 0, POPT_ARG_LONG, &timeout,
+         0, _("OCSP communication timeout"), NULL},
         POPT_TABLEEND
     };
 
@@ -328,6 +333,7 @@ int main(int argc, const char *argv[])
     sss_chain_id_set((uint64_t)chain_id);
 
     DEBUG_INIT(debug_level, opt_logger);
+    sss_set_debug_backtrace_enable((backtrace == 0) ? false : true);
 
     DEBUG(SSSDBG_TRACE_FUNC, "p11_child started.\n");
 
@@ -382,9 +388,19 @@ int main(int argc, const char *argv[])
         }
     }
 
+    /* sanity check for timeout value */
+    if (timeout > INT32_MAX) {
+        fprintf(stderr,
+                "Timeout value [%li] is too long, using [%d]\n",
+                timeout, INT32_MAX);
+        timeout = INT32_MAX;
+    } else if (timeout < -1) {
+        timeout = -1;
+    }
+
     ret = do_work(main_ctx, mode, ca_db, cert_verify_opts, wait_for_card,
                   cert_b64, pin, module_name, token_name, key_id, label, uri,
-                  &multi);
+                  timeout, &multi);
 
 done:
     fprintf(stdout, "%d\n%s", ret, multi ? multi : "");

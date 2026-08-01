@@ -1,7 +1,7 @@
 /*
     SSSD
 
-    Helper child to commmunicate with SmartCard via OpenSSL
+    Helper child to communicate with SmartCard via OpenSSL
 
     Authors:
         Sumit Bose <sbose@redhat.com>
@@ -44,6 +44,7 @@ struct p11_ctx {
     const char *ca_db;
     bool wait_for_card;
     struct cert_verify_opts *cert_verify_opts;
+    time_t ocsp_deadline;
 };
 
 static OCSP_RESPONSE *query_responder(BIO *cbio, const char *host,
@@ -390,8 +391,19 @@ static errno_t do_ocsp(struct p11_ctx *p11_ctx, X509 *cert)
 
     OCSP_request_add1_nonce(ocsp_req, NULL, -1);
 
-    ocsp_resp = process_responder(ocsp_req, host, path, port, use_ssl,
-                                  req_timeout);
+    if (p11_ctx->ocsp_deadline != -1  && p11_ctx->cert_verify_opts->soft_ocsp) {
+        req_timeout = p11_ctx->ocsp_deadline - time(NULL);
+        if (req_timeout <= 0) {
+            /* no time left for OCSP */
+            DEBUG(SSSDBG_TRACE_INTERNAL,
+                  "Timeout before we could run OCSP request.\n");
+            req_timeout = 0;
+        }
+    }
+    if (req_timeout != 0) {
+        ocsp_resp = process_responder(ocsp_req, host, path, port, use_ssl,
+                                      req_timeout);
+    }
     if (ocsp_resp == NULL) {
         if (p11_ctx->cert_verify_opts->soft_ocsp) {
             tmp_str = get_issuer_subject_str(p11_ctx, cert);
@@ -580,7 +592,8 @@ static int p11_ctx_destructor(struct p11_ctx *p11_ctx)
 }
 
 errno_t init_p11_ctx(TALLOC_CTX *mem_ctx, const char *ca_db,
-                     bool wait_for_card, struct p11_ctx **p11_ctx)
+                     bool wait_for_card, time_t timeout,
+                     struct p11_ctx **p11_ctx)
 {
     int ret;
     struct p11_ctx *ctx;
@@ -590,6 +603,16 @@ errno_t init_p11_ctx(TALLOC_CTX *mem_ctx, const char *ca_db,
         DEBUG(SSSDBG_OP_FAILURE, "talloc_zero failed.\n");
         return ENOMEM;
     }
+
+    if (timeout == 1) {
+        /* timeout of 1 sec is too short (see -1 in deadline calculation),
+         * increasing to 2 and hope that the ocsp operation finishes
+         * before p11_child is terminated.
+         */
+        timeout = 2;
+    }
+    /* timeout <= 0 means no timeout specified */
+    ctx->ocsp_deadline = timeout > 0 ? time(NULL) + timeout - 1 : -1;
 
     /* See https://wiki.openssl.org/index.php/Library_Initialization for
      * details. */
@@ -817,6 +840,10 @@ bool do_verification(struct p11_ctx *p11_ctx, X509 *cert)
                 goto done;
             }
 
+            /* If the CRL is expired typically X509_V_ERR_CRL_HAS_EXPIRED is
+             * returned and we have to check without the CRL if the
+             * certificate itself is valid at all and not e.g. expired as
+             * well. */
             X509_VERIFY_PARAM_clear_flags(verify_param, (X509_V_FLAG_CRL_CHECK
                                                    |X509_V_FLAG_CRL_CHECK_ALL));
 
@@ -834,6 +861,46 @@ bool do_verification(struct p11_ctx *p11_ctx, X509 *cert)
             DEBUG(SSSDBG_TRACE_ALL,
                   "Certificate valid after ignoring expired CRL.\n");
             sss_log(SSS_LOG_CRIT, "Certificate %s is valid after ignoring "
+                                  "expired CRL because 'soft_crl' is set.\n",
+                                  tmp_str == NULL ? " - not available -"
+                                                  :tmp_str);
+
+            X509_STORE_CTX_cleanup(ctx);
+            if (!X509_STORE_CTX_init(ctx, p11_ctx->x509_store, cert, NULL)) {
+                err = ERR_get_error();
+                DEBUG(SSSDBG_OP_FAILURE,
+                      "X509_STORE_CTX_init failed [%lu][%s].\n", err,
+                      ERR_error_string(err, NULL));
+                goto done;
+            }
+
+            verify_param = X509_STORE_CTX_get0_param(ctx);
+            if (verify_param == NULL) {
+                DEBUG(SSSDBG_OP_FAILURE, "X509_VERIFY_PARAM_new failed.\n");
+                goto done;
+            }
+            /* Since the certificate itself is valid we now can check with the
+             * CRL and X509_V_FLAG_NO_CHECK_TIME if the certificate was
+             * already revoked in the expired CRL and we can reject it. */
+            X509_VERIFY_PARAM_set_flags(verify_param, (X509_V_FLAG_NO_CHECK_TIME
+                                                   |X509_V_FLAG_CRL_CHECK
+                                                   |X509_V_FLAG_CRL_CHECK_ALL));
+
+            ret = X509_verify_cert(ctx);
+            if (ret != 1) {
+                DEBUG(SSSDBG_OP_FAILURE,
+                      "X509_verify_cert failed [%d].\n", ret);
+                ret = X509_STORE_CTX_get_error(ctx);
+                DEBUG(SSSDBG_OP_FAILURE, "X509_verify_cert failed [%d][%s].\n",
+                                         ret,
+                                         X509_verify_cert_error_string(ret));
+                goto done;
+            }
+
+            DEBUG(SSSDBG_TRACE_ALL, "Certificate valid after ignoring "
+                                    "expiration time of expired CRL.\n");
+            sss_log(SSS_LOG_CRIT, "Certificate %s is valid after ignoring "
+                                  "expiration time of "
                                   "expired CRL because 'soft_crl' is set.\n",
                                   tmp_str == NULL ? " - not available -"
                                                   :tmp_str);
@@ -1082,7 +1149,7 @@ done:
     return ret;
 }
 
-/* Currently this funtion is only used the print the curve type in the debug
+/* Currently this function is only used to print the curve type in the debug
  * messages. */
 static void get_ec_curve_type(CK_FUNCTION_LIST *module,
                               CK_SESSION_HANDLE session,

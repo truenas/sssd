@@ -181,8 +181,9 @@
                             Optional. Applicable only when dyndns_update
                             is true. Choose the interface or a list of interfaces
                             whose IP addresses should be used for dynamic DNS
-                            updates. Special value <quote>*</quote> implies that
-                            IPs from all interfaces should be used.
+                            updates. The name of interface can be a wildcard
+                            pattern. See <emphasis>man 7 glob</emphasis> for
+                            details about patterns.
                         </para>
                         <para>
                             NOTE: While it is still possible to use the old
@@ -226,32 +227,6 @@
                         </para>
                         <para>
                             Default: Same as dyndns_auth
-                        </para>
-                    </listitem>
-                </varlistentry>
-
-                <varlistentry>
-                    <term>ipa_enable_dns_sites (boolean)</term>
-                    <listitem>
-                        <para>
-                            Enables DNS sites - location based
-                            service discovery.
-                        </para>
-                        <para>
-                            If true and service discovery (see Service
-                            Discovery paragraph at the bottom of the man page)
-                            is enabled, then the SSSD will first attempt
-                            location based discovery using a query that contains
-                            "_location.hostname.example.com" and then fall back
-                            to traditional SRV discovery. If the location based
-                            discovery succeeds, the IPA servers located with
-                            the location based discovery are treated as primary
-                            servers and the IPA servers located using the
-                            traditional SRV discovery are used as back up
-                            servers
-                        </para>
-                        <para>
-                            Default: false
                         </para>
                     </listitem>
                 </varlistentry>
@@ -321,12 +296,26 @@
                         <para>
                             Setting this option makes sense for environments
                             where the DNS server is different from the identity
-                            server.
+                            server or when we use encrypted DNS.
+                        </para>
+                        <para>
+                           The parameter can be a simple string containing
+                           DNS name or IP address. It can also be an URI.
+                           The URI can look like
+                           <emphasis>dns://servername/</emphasis> or
+                           <emphasis>dns+tls://1.2.3.4:853#servername/</emphasis>.
+                        </para>
+                        <para>
+                            The second example enables DNS-over-TLS protocol for
+                            DNS updates. The nsupdate utility must support DoT -
+                            check the <emphasis>man nsupdate</emphasis> before
+                            enabling it in SSSD.
                         </para>
                         <para>
                             Please note that this option will be only used in
                             fallback attempt when previous attempt using
-                            autodetected settings failed.
+                            autodetected settings failed or when DNS-over-TLS
+                            is enabled.
                         </para>
                         <para>
                             Default: None (let nsupdate choose the server)
@@ -345,6 +334,56 @@
                         </para>
                         <para>
                             Default: true
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>dyndns_dot_cacert (string)</term>
+                    <listitem>
+                        <para>
+                            This option specifies the file of the certificate
+                            authorities certificates (in PEM format) in order
+                            to verify the remote server TLS certificate when
+                            using  DoT.
+                        </para>
+                        <para>
+                            Default: None (use global certificate store)
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>dyndns_dot_cert (string)</term>
+                    <listitem>
+                        <para>
+                            This option sets the certificate(s) file for
+                            authentication for the DoT transport to the remote
+                            server. The certificate chain file is expected to
+                            be in PEM format.
+                        </para>
+                        <para>
+                            The <emphasis>dyndns_dot_cert</emphasis> and
+                            <emphasis>dyndns_dot_key</emphasis> options must be
+                            both set to achieve mutual TLS authentication.
+                        </para>
+                        <para>
+                            Default: None (Do not use TLS authentication)
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>dyndns_dot_key (string)</term>
+                    <listitem>
+                        <para>
+                            This option sets the key file for authenticated
+                            encryption for the DoT transport to the remote
+                            server. The private key file is expected to
+                            be in PEM format.
+                        </para>
+                        <para>
+                            Default: None (Do not use TLS authentication)
                         </para>
                     </listitem>
                 </varlistentry>
@@ -419,12 +458,7 @@
                     <term>ipa_subid_ranges_search_base (string)</term>
                     <listitem>
                         <para>
-                            Optional. Use the given string as search base for
-                            subordinate ranges related objects.
-                        </para>
-                        <para>
-                            Default: the value of
-                            <emphasis>cn=subids,%basedn</emphasis>
+                            Deprecated. Use ldap_subid_ranges_search_base instead.
                         </para>
                     </listitem>
                 </varlistentry>
@@ -872,6 +906,12 @@ ad_server = dc.ad.domain.com
                         <para>ad_site</para>
                     </listitem>
                     <listitem>
+                        <para>ipa_server</para>
+                    </listitem>
+                    <listitem>
+                        <para>ipa_backup_server</para>
+                    </listitem>
+                    <listitem>
                         <para>ldap_search_base</para>
                     </listitem>
                     <listitem>
@@ -885,11 +925,15 @@ ad_server = dc.ad.domain.com
                     </listitem>
                 </itemizedlist>
             </para>
+            <para>
+                Options prefixed with 'ad_' or 'ipa_' only apply to
+                their respective subdomain type.
+            </para>
         </refsect2>
         <refsect2 id='client_configuration'>
             <title>OPTIONS TUNABLE ON IPA CLIENTS</title>
             <para>
-                The following options can be set in a subdomain
+                The following options can be set in an AD subdomain
                 section on an IPA client:
                 <itemizedlist>
                     <listitem>

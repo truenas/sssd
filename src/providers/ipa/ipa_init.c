@@ -85,7 +85,7 @@ static bool srv_in_server_list(const char *servers)
         return false;
     }
 
-    /* split server parm into a list */
+    /* split server param into a list */
     ret = split_on_separator(tmp_ctx, servers, ',', true, true, &list, NULL);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Failed to parse server list!\n");
@@ -111,6 +111,7 @@ static errno_t ipa_init_options(TALLOC_CTX *mem_ctx,
     struct ipa_options *ipa_options;
     const char *ipa_servers;
     const char *ipa_backup_servers;
+    const char *realm;
     errno_t ret;
 
     ret = ipa_get_options(mem_ctx, be_ctx->cdb, be_ctx->conf_path,
@@ -121,9 +122,10 @@ static errno_t ipa_init_options(TALLOC_CTX *mem_ctx,
 
     ipa_servers = dp_opt_get_string(ipa_options->basic, IPA_SERVER);
     ipa_backup_servers = dp_opt_get_string(ipa_options->basic, IPA_BACKUP_SERVER);
+    realm = dp_opt_get_string(ipa_options->basic, IPA_KRB5_REALM);
 
     ret = ipa_service_init(ipa_options, be_ctx, ipa_servers,
-                           ipa_backup_servers, ipa_options,
+                           ipa_backup_servers, realm, "IPA", ipa_options,
                            &ipa_options->service);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "Failed to init IPA service [%d]: %s\n",
@@ -143,6 +145,7 @@ static errno_t ipa_init_id_ctx(TALLOC_CTX *mem_ctx,
 {
     struct ipa_id_ctx *ipa_id_ctx = NULL;
     struct sdap_id_ctx *sdap_id_ctx = NULL;
+    char *basedn;
     errno_t ret;
 
     ipa_id_ctx = talloc_zero(mem_ctx, struct ipa_id_ctx);
@@ -165,8 +168,32 @@ static errno_t ipa_init_id_ctx(TALLOC_CTX *mem_ctx,
                              be_ctx->cdb,
                              be_ctx->conf_path,
                              be_ctx->provider,
+                             true,
                              &sdap_id_ctx->opts);
     if (ret != EOK) {
+        goto done;
+    }
+
+    ret = ipa_set_sdap_options(ipa_options, ipa_options->id);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "Cannot set IPA sdap options\n");
+        goto done;
+    }
+
+    ret = domain_to_basedn(mem_ctx,
+                           dp_opt_get_string(ipa_options->basic, IPA_KRB5_REALM),
+                           &basedn);
+    if (ret != EOK) {
+        goto done;
+    }
+
+    ret = ipa_set_search_bases(ipa_options,
+                               be_ctx->cdb,
+                               basedn,
+                               be_ctx->conf_path,
+                               NULL);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "Cannot set search bases\n");
         goto done;
     }
 
@@ -217,7 +244,7 @@ static errno_t ipa_init_dyndns(struct be_ctx *be_ctx,
 
     ret = be_nsupdate_check();
     if (ret != EOK) {
-        DEBUG(SSSDBG_CONF_SETTINGS, "nsupdate is not availabe, "
+        DEBUG(SSSDBG_CONF_SETTINGS, "nsupdate is not available, "
               "dynamic DNS updates will not work\n");
         return EOK;
     }
@@ -241,7 +268,6 @@ static errno_t ipa_init_server_mode(struct be_ctx *be_ctx,
     const char *ipa_servers;
     const char *dnsdomain;
     const char *hostname;
-    bool sites_enabled;
     errno_t ret;
 
     ipa_id_ctx->view_name = talloc_strdup(ipa_id_ctx, SYSDB_DEFAULT_VIEW_NAME);
@@ -258,12 +284,11 @@ static errno_t ipa_init_server_mode(struct be_ctx *be_ctx,
 
     hostname = dp_opt_get_string(ipa_options->basic, IPA_HOSTNAME);
     ipa_servers = dp_opt_get_string(ipa_options->basic, IPA_SERVER);
-    sites_enabled = dp_opt_get_bool(ipa_options->basic, IPA_ENABLE_DNS_SITES);
     dnsdomain = dp_opt_get_string(be_ctx->be_res->opts, DP_RES_OPT_DNS_DOMAIN);
 
-    if (srv_in_server_list(ipa_servers) || sites_enabled) {
-        DEBUG(SSSDBG_IMPORTANT_INFO, "SSSD configuration uses either DNS "
-              "SRV resolution or IPA site discovery to locate IPA servers. "
+    if (srv_in_server_list(ipa_servers)) {
+        DEBUG(SSSDBG_IMPORTANT_INFO, "SSSD configuration uses DNS "
+              "SRV resolution to locate IPA servers. "
               "On IPA server itself, it is recommended that SSSD is "
               "configured to only connect to the IPA server it's running at. ");
 
@@ -308,10 +333,7 @@ static errno_t ipa_init_client_mode(struct be_ctx *be_ctx,
                                     struct ipa_options *ipa_options,
                                     struct ipa_id_ctx *ipa_id_ctx)
 {
-    struct ipa_srv_plugin_ctx *srv_ctx;
-    const char *ipa_domain;
     const char *hostname;
-    bool sites_enabled;
     errno_t ret;
 
     ret = sysdb_get_view_name(ipa_id_ctx, be_ctx->domain->sysdb,
@@ -326,28 +348,13 @@ static errno_t ipa_init_client_mode(struct be_ctx *be_ctx,
     }
 
     hostname = dp_opt_get_string(ipa_options->basic, IPA_HOSTNAME);
-    sites_enabled = dp_opt_get_bool(ipa_options->basic, IPA_ENABLE_DNS_SITES);
 
-    if (sites_enabled) {
-        /* use IPA plugin */
-        ipa_domain = dp_opt_get_string(ipa_options->basic, IPA_DOMAIN);
-        srv_ctx = ipa_srv_plugin_ctx_init(be_ctx, be_ctx->be_res->resolv,
-                                          hostname, ipa_domain);
-        if (srv_ctx == NULL) {
-            DEBUG(SSSDBG_FATAL_FAILURE, "Out of memory?\n");
-            return ENOMEM;
-        }
-
-        be_fo_set_srv_lookup_plugin(be_ctx, ipa_srv_plugin_send,
-                                    ipa_srv_plugin_recv, srv_ctx, "IPA");
-    } else {
-        /* fall back to standard plugin on clients. */
-        ret = be_fo_set_dns_srv_lookup_plugin(be_ctx, hostname);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE, "Unable to set SRV lookup plugin "
-                  "[%d]: %s\n", ret, strerror(ret));
-            return ret;
-        }
+    /* fall back to standard plugin on clients. */
+    ret = be_fo_set_dns_srv_lookup_plugin(be_ctx, hostname);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to set SRV lookup plugin "
+              "[%d]: %s\n", ret, strerror(ret));
+        return ret;
     }
 
     return EOK;

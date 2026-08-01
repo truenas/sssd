@@ -438,6 +438,10 @@
                         <term>default_domain_suffix (string)</term>
                         <listitem>
                             <para>
+                                Please note that this option is deprecated and
+                                domain_resolution_order should be used.
+                            </para>
+                            <para>
                                 This string will be used as a default domain
                                 name for all names without a domain name
                                 component. The main use case is environments
@@ -603,11 +607,13 @@
                                     <listitem>
                                         <para>
                                         If a Certificate Revocation List (CRL)
-                                        is expired ignore the CRL checks for the
-                                        related certificates. This option should
-                                        be used to allow authentication when the
-                                        system is offline and the CRL cannot be
-                                        renewed.</para>
+                                        is expired ignore the expiration time
+                                        of the CRL and check the related
+                                        certificates with the expired CRL. This
+                                        option should be used to allow
+                                        authentication when the system is
+                                        offline and the CRL cannot be renewed.
+                                        </para>
                                     </listitem>
                                 </varlistentry>
                                 </variablelist>
@@ -621,7 +627,7 @@
                             </para>
                         </listitem>
                     </varlistentry>
-                    <varlistentry>
+                    <varlistentry condition="have_libnl">
                         <term>disable_netlink (boolean)</term>
                         <listitem>
                             <para>
@@ -2067,6 +2073,38 @@ pam_gssapi_indicators_map = sudo:pkinit, sudo-i:pkinit
                         </para>
                     </listitem>
                 </varlistentry>
+                <varlistentry condition="with_samba">
+                    <term>pam_gssapi_indicators_apply</term>
+                    <listitem>
+                        <para>
+                            Comma separated list of triples to assign
+                            additional information from the Kerberos ticket,
+                            e.g. a SID from the PAC, to authentication
+                            indicators.
+                        </para>
+                        <para>
+                            Currently supported is:
+                            <itemizedlist>
+                                <listitem>
+                                    <para>SID:S-1-5-[domain]-[RID]:[authentication indicator]</para>
+                                </listitem>
+                            </itemizedlist>
+                        </para>
+                        <para>
+                            Example: To assign a SID, which is e.g. set by
+                            Active Directory's Authentication Mechanism
+                            Assurance (AMA) if the AD user used a Smartcard
+                            for authentication, to the 'pkinit'
+                            authentication indicator use:
+                            <programlisting>
+pam_gssapi_indicators_apply = SID:S-1-5-12345-23456-34567-4321:pkinit
+                            </programlisting>
+                        </para>
+                        <para>
+                            Default: not set
+                        </para>
+                    </listitem>
+                </varlistentry>
             </variablelist>
         </refsect2>
 
@@ -2335,6 +2373,13 @@ pam_gssapi_indicators_map = sudo:pkinit, sudo-i:pkinit
                             must be set to 'True' which is the default for the
                             IPA and AD provider. If krb5_validate is set to
                             'False' the PAC checks will be skipped.
+			</para>
+			<para>
+                            Please note that the checks listed below only apply
+                            to PACs issued by Active Directory or recent
+                            versions of FreeIPA. PACs issued e.g. by a plain
+                            MIT Kerberos KDC will not contain the needed PAC
+                            data buffers to run the checks.
 			</para>
                         <para>
 			    The following options can be used alone or in a
@@ -3069,10 +3114,10 @@ pam_gssapi_indicators_map = sudo:pkinit, sudo-i:pkinit
                         <para>
                             If set to TRUE, all requests to this domain
                             must use fully qualified names. For example,
-                            if used in LOCAL domain that contains a "test"
+                            if used in EXAMPLE domain that contains a "test"
                             user, <command>getent passwd test</command>
                             wouldn't find the user while <command>getent
-                            passwd test@LOCAL</command> would.
+                            passwd test@EXAMPLE</command> would.
                         </para>
                         <para>
                             NOTE: This option has no effect on netgroup
@@ -3188,7 +3233,7 @@ pam_gssapi_indicators_map = sudo:pkinit, sudo-i:pkinit
                             Internal special providers are:
                         </para>
                         <para>
-                            <quote>permit</quote> always allow access. It's the only permitted access provider for a local domain.
+                            <quote>permit</quote> always allow access.
                         </para>
                         <para>
                             <quote>deny</quote> always deny access.
@@ -3431,8 +3476,7 @@ pam_gssapi_indicators_map = sudo:pkinit, sudo-i:pkinit
                             session related tasks.
                         </para>
                         <para>
-                            Default: <quote>id_provider</quote> is used if it
-                            is set and can perform session related tasks.
+                            Default: <quote>none</quote>.
                         </para>
                         <para>
                             <emphasis>NOTE:</emphasis> In order to have this feature
@@ -3777,11 +3821,11 @@ pam_gssapi_indicators_map = sudo:pkinit, sudo-i:pkinit
                     <term>failover_primary_timeout (integer)</term>
                     <listitem>
                         <para>
-                            When no primary server is currently available,
-                            SSSD fail overs to a backup server. This option
-                            defines the amount of time (in seconds) to
-                            wait before SSSD tries to reconnect to a primary
-                            server again.
+                            When no primary server is available, SSSD
+                            fails over to a backup server. This option
+                            defines the number of seconds SSSD
+                            waits before attempting to reconnect to the primary
+                            server.
                         </para>
                         <para>
                             Note: The minimum value is 31.
@@ -4429,10 +4473,12 @@ ldap_user_extra_attrs = phone:telephoneNumber
                                 <quote>ldap</quote>, <quote>AD</quote> or
                                 <quote>ipa</quote>.</para>
                             </listitem>
-                            <listitem condition="with_files_provider">
-                                <para>The RULE_NAME for the <quote>files</quote>
-                                provider which tries to find a user with the
-                                same name.</para>
+                            <listitem>
+                                <para>If maprule is not set and provider is
+                                <quote>proxy</quote><phrase condition="with_files_provider">
+                                &nbsp;or <quote>files</quote></phrase>,
+                                the RULE_NAME name is assumed to be the name of
+                                the matching user.</para>
                             </listitem>
                         </itemizedlist>
                     </para>
@@ -4556,6 +4602,17 @@ ldap_user_extra_attrs = phone:telephoneNumber
                     If the second factor is optional and it should be possible
                     to log in either only with the password or with both factors
                     two-step prompting has to be used.
+                    </para>
+                    <para>
+                    Some clients, such as SSH with
+                    'PasswordAuthentication yes', generate their own prompts
+                    and do not use prompts provided by SSSD or other PAM
+                    modules. Additionally, for SSH with
+                    PasswordAuthentication, if two-factor authentication is
+                    available, SSSD expects that the
+                    credentials entered by the user at the SSH password prompt
+                    will always be the two factors in a single string, even if
+                    two-factor authentication is optional.
                     </para>
                 </listitem>
             </varlistentry>

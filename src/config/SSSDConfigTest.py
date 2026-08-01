@@ -581,6 +581,7 @@ class SSSDConfigTestSSSDDomain(unittest.TestCase):
             'dns_discovery_domain',
             'failover_primary_timeout',
             'dyndns_update',
+            'dyndns_update_per_family',
             'dyndns_ttl',
             'dyndns_iface',
             'dyndns_refresh_interval',
@@ -589,6 +590,9 @@ class SSSDConfigTestSSSDDomain(unittest.TestCase):
             'dyndns_force_tcp',
             'dyndns_auth',
             'dyndns_server',
+            'dyndns_dot_cacert',
+            'dyndns_dot_cert',
+            'dyndns_dot_key',
             'subdomain_enumerate',
             'override_gid',
             'case_sensitive',
@@ -621,6 +625,7 @@ class SSSDConfigTestSSSDDomain(unittest.TestCase):
             'pam_gssapi_services',
             'pam_gssapi_check_upn',
             'pam_gssapi_indicators_map',
+            'pam_gssapi_indicators_apply',
             'refresh_expired_interval',
             'refresh_expired_interval_offset',
             'local_auth_policy']
@@ -942,6 +947,7 @@ class SSSDConfigTestSSSDDomain(unittest.TestCase):
             'dns_discovery_domain',
             'failover_primary_timeout',
             'dyndns_update',
+            'dyndns_update_per_family',
             'dyndns_ttl',
             'dyndns_iface',
             'dyndns_refresh_interval',
@@ -949,6 +955,9 @@ class SSSDConfigTestSSSDDomain(unittest.TestCase):
             'dyndns_force_tcp',
             'dyndns_auth',
             'dyndns_server',
+            'dyndns_dot_cacert',
+            'dyndns_dot_cert',
+            'dyndns_dot_key',
             'subdomain_enumerate',
             'override_gid',
             'case_sensitive',
@@ -981,6 +990,7 @@ class SSSDConfigTestSSSDDomain(unittest.TestCase):
             'pam_gssapi_services',
             'pam_gssapi_check_upn',
             'pam_gssapi_indicators_map',
+            'pam_gssapi_indicators_apply',
             'refresh_expired_interval',
             'refresh_expired_interval_offset',
             'dyndns_refresh_interval',
@@ -2030,14 +2040,19 @@ class SSSDConfigTestSSSDConfig(unittest.TestCase):
         with open(srcdir + "/testconfigs/sssd-test-parse.conf", "r") as f:
             data = sssdconfig.parse(f)
 
-        self.assertEqual(len(data), 4)
-        self.assertEqual(data[-1], {'type': "section",
+        self.assertEqual(len(data), 5)
+        self.assertEqual(data[-2], {'type': "section",
                                     'name': "nss",
                                     'value': [{'type': 'option',
                                                'name': 'debug_level',
                                                'value': '1'},
                                               {'type': 'empty',
                                                'name': 'empty'}]})
+        self.assertEqual(data[-1], {'type': "section",
+                                    'name': "pam",
+                                    'value': [{'type': 'empty',
+                                               'name': 'empty'}]})
+
 
         with open(srcdir + "/testconfigs/sssd-valid.conf", "r") as f:
             data = sssdconfig.parse(f)

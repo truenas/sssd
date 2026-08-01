@@ -47,6 +47,7 @@
 #include "util/sss_format.h"
 #include "util/sss_regexp.h"
 #include "util/debug.h"
+#include "util/memory_erase.h"
 
 /* name of the monitor server instance */
 #define SSSD_MONITOR_NAME        "sssd"
@@ -240,7 +241,6 @@ int sss_mem_attach(TALLOC_CTX *mem_ctx, void *ptr, void_destructor_fn_t *fn);
  * to make it possible to use it as talloc destructor.
  */
 int sss_erase_talloc_mem_securely(void *p);
-void sss_erase_mem_securely(void *p, size_t size);
 
 /* from usertools.c */
 char *get_uppercase_realm(TALLOC_CTX *memctx, const char *name);
@@ -323,6 +323,22 @@ errno_t sss_parse_internal_fqname(TALLOC_CTX *mem_ctx,
                                   const char *fqname,
                                   char **_shortname,
                                   char **_dom_name);
+
+/* Accepts fqname in the format shortname@domname only
+ * and returns a pointer to domain part or NULL if not found.
+ */
+__attribute__((always_inline))
+static inline const char *sss_get_domain_internal_fqname(const char *fqname)
+{
+    const char *separator = strrchr(fqname, '@');
+
+    if (separator == NULL || *(separator + 1) == '\0' || separator == fqname) {
+        /*The name does not contain name or domain component. */
+        return NULL;
+    }
+
+    return (separator + 1);
+}
 
 /* Creates internal fqname in format shortname@domname.
  * The domain portion is lowercased. */
@@ -726,12 +742,10 @@ char *sss_replace_char(TALLOC_CTX *mem_ctx,
                        const char match,
                        const char sub);
 
-char * sss_replace_space(TALLOC_CTX *mem_ctx,
-                         const char *orig_name,
-                         const char replace_char);
-char * sss_reverse_replace_space(TALLOC_CTX *mem_ctx,
-                                 const char *orig_name,
-                                 const char replace_char);
+void sss_replace_space_inplace(char *orig_name,
+                               const char replace_char);
+void sss_reverse_replace_space_inplace(char *orig_name,
+                                       const char replace_char);
 
 #define GUID_BIN_LENGTH 16
 /* 16 2-digit hex values + 4 dashes + terminating 0 */
@@ -741,6 +755,8 @@ errno_t guid_blob_to_string_buf(const uint8_t *blob, char *str_buf,
                                 size_t buf_size);
 
 const char *get_last_x_chars(const char *str, size_t x);
+errno_t string_begins_with(const char *str, const char *prefix, bool *_result);
+errno_t string_ends_with(const char *str, const char *suffix, bool *_result);
 
 char **concatenate_string_array(TALLOC_CTX *mem_ctx,
                                 char **arr1, size_t len1,
@@ -899,4 +915,20 @@ static inline struct timeval sss_tevent_timeval_current_ofs_time_t(time_t secs)
     uint32_t secs32 = (secs > UINT_MAX ? UINT_MAX : secs);
     return tevent_timeval_current_ofs(secs32, 0);
 }
+
+/* parsed uri */
+struct sss_parsed_dns_uri {
+    const char *scheme;
+    const char *address;
+    const char *port;
+    const char *host;
+    const char *path;
+
+    char *data;
+};
+
+errno_t sss_parse_dns_uri(TALLOC_CTX *ctx,
+                          const char *uri,
+                          struct sss_parsed_dns_uri **_parsed_uri);
+
 #endif /* __SSSD_UTIL_H__ */

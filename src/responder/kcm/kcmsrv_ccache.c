@@ -159,11 +159,6 @@ bool kcm_cc_access(struct kcm_ccache *cc,
         return false;
     }
 
-    if (uid == 0 && gid == 0) {
-        /* root can access any ccache */
-        return true;
-    }
-
     ok = ((cc->owner.uid == uid) && (cc->owner.gid == gid));
     if (!ok) {
         DEBUG(SSSDBG_MINOR_FAILURE,
@@ -404,7 +399,7 @@ krb5_creds **kcm_cc_unmarshal(TALLOC_CTX *mem_ctx,
 
     tmp_ctx = talloc_new(NULL);
     if (tmp_ctx == NULL) {
-        goto done;
+        goto fail;
     }
 
     for (cred = kcm_cc_get_cred(cc); cred != NULL; cred = kcm_cc_next_cred(cred)) {
@@ -417,7 +412,7 @@ krb5_creds **kcm_cc_unmarshal(TALLOC_CTX *mem_ctx,
         cred_list[i] = kcm_cred_to_krb5(krb_context, cred);
         if (cred_list[i] == NULL) {
             DEBUG(SSSDBG_CRIT_FAILURE, "Failed to convert kcm cred to krb5\n");
-            goto done;
+            goto fail;
         }
     }
 
@@ -426,8 +421,10 @@ krb5_creds **kcm_cc_unmarshal(TALLOC_CTX *mem_ctx,
 
     talloc_steal(mem_ctx, cred_list);
 
+    talloc_free(tmp_ctx);
     return cred_list;
-done:
+
+fail:
     talloc_free(tmp_ctx);
     return NULL;
 #endif
@@ -1159,9 +1156,6 @@ static void kcm_ccdb_name_by_uuid_done(struct tevent_req *subreq)
     ret = state->db->ops->name_by_uuid_recv(subreq, state, &state->name);
     talloc_zfree(subreq);
     if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE,
-              "Failed to resolve cache by UUID [%d]: %s\n",
-              ret, sss_strerror(ret));
         tevent_req_error(req, ret);
         return;
     }
@@ -1239,9 +1233,6 @@ static void kcm_ccdb_uuid_by_name_done(struct tevent_req *subreq)
     ret = state->db->ops->uuid_by_name_recv(subreq, state, state->uuid);
     talloc_zfree(subreq);
     if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE,
-              "Failed to resolve cache by UUID [%d]: %s\n",
-              ret, sss_strerror(ret));
         tevent_req_error(req, ret);
         return;
     }

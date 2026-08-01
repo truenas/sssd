@@ -1,5 +1,11 @@
 # SSSD SPEC file for Fedora 34+ and RHEL-9+
 
+# Upstream version is using pre-release version with dash as a separator
+# since git does not support tilde in tag name. On the other side, Fedora and
+# RHEL requires tilde as a separator to correctly order builds.
+# For example: 2.10.0-beta1 vs 2.10.0~beta1
+%global upstream_version @PACKAGE_VERSION@
+
 # define SSSD user
 %if 0%{?rhel}
 %global sssd_user sssd
@@ -43,12 +49,15 @@
 
 # Determine the location of the LDB modules directory
 %global ldb_modulesdir %(pkg-config --variable=modulesdir ldb)
-%global ldb_version 1.2.0
 
-%global samba_package_version %(rpm -q samba-devel --queryformat %{version}-%{release})
+%global samba_package_version %(rpm -q samba-devel --queryformat %{version})
+
+%if "%{?samba_package_version}" == ""
+%global samba_package_version 4.19
+%endif
 
 Name: @PACKAGE_NAME@
-Version: @PACKAGE_VERSION@
+Version: %{lua:print((string.gsub("@PACKAGE_VERSION@", "-", "~")))}
 Release: 0@PRERELEASE_VERSION@%{?dist}
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -115,7 +124,7 @@ BuildRequires: libdhash-devel >= 0.4.2
 BuildRequires: libfido2-devel
 %endif
 BuildRequires: libini_config-devel >= 1.1
-BuildRequires: libldb-devel >= %{ldb_version}
+BuildRequires: libldb-devel
 BuildRequires: libnfsidmap-devel
 BuildRequires: libnl3-devel
 BuildRequires: libselinux-devel
@@ -155,6 +164,9 @@ BuildRequires: softhsm >= 2.1.0
 BuildRequires: bc
 BuildRequires: systemd-devel
 BuildRequires: systemtap-sdt-devel
+%if 0%{?fedora} >= 41
+BuildRequires: systemtap-sdt-dtrace
+%endif
 BuildRequires: uid_wrapper
 BuildRequires: po4a
 %if %{build_subid}
@@ -182,7 +194,7 @@ Obsoletes: libsss_simpleifp < 2.9.0
 Obsoletes: libsss_simpleifp-debuginfo < 2.9.0
 # Requires
 # due to ABI changes in 1.1.30/1.2.0
-Requires: libldb >= %{ldb_version}
+Requires: libldb >= %{samba_package_version}
 Requires: sssd-client%{?_isa} = %{version}-%{release}
 Requires: (libsss_sudo = %{version}-%{release} if sudo)
 Requires: (libsss_autofs%{?_isa} = %{version}-%{release} if autofs)
@@ -510,6 +522,7 @@ Requires: sssd-common = %{version}-%{release}
 This package provides Kerberos plugins that are required to enable
 authentication against external identity providers. Additionally a helper
 program to handle the OAuth 2.0 Device Authorization Grant is provided.
+Please note that this version of SSSD does not include SSSD's IdP provider.
 
 %if %{build_passkey}
 %package passkey
@@ -524,7 +537,7 @@ enable authentication with passkey token.
 %endif
 
 %prep
-%autosetup -p1
+%autosetup -n %{name}-%{upstream_version} -p1
 
 %build
 
@@ -998,7 +1011,7 @@ done
 
 %if %{build_passkey}
 %files passkey
-%attr(755,%{sssd_user},%{sssd_user}) %{_libexecdir}/%{servicename}/passkey_child
+%{_libexecdir}/%{servicename}/passkey_child
 %{_libdir}/%{name}/modules/sssd_krb5_passkey_plugin.so
 %{_datadir}/sssd/krb5-snippets/sssd_enable_passkey
 %config(noreplace) %{_sysconfdir}/krb5.conf.d/sssd_enable_passkey

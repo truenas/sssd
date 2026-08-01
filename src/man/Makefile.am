@@ -9,7 +9,7 @@ top_builddir = ../..
 # If no conditions are given, *all* conditionals are expanded. We don't want
 # to include any conditions by default, so we need to pass a phony conditional
 if BUILD_SUDO
-# conditionals are delimeted with a semicolon
+# conditionals are delimited with a semicolon
 SUDO_CONDS = ;with_sudo
 endif
 if BUILD_AUTOFS
@@ -47,6 +47,9 @@ endif
 if HAVE_INOTIFY
 HAVE_INOTIFY_CONDS = ;have_inotify
 endif
+if BUILD_SUBID
+SUBID_CONDS = ;with_subid
+endif
 if BUILD_PASSKEY
 PASSKEY_CONDS = ;build_passkey
 endif
@@ -58,9 +61,15 @@ endif
 if SSSD_NON_ROOT_USER
 SSSD_NON_ROOT_USER_CONDS = ;with_non_root_user_support
 endif
+if HAVE_LIBNL
+LIBNL_CONDS = ;have_libnl
+endif
+if BUILD_SAMBA
+SAMBA_CONDS = ;with_samba
+endif
 
 
-CONDS = with_false$(SUDO_CONDS)$(AUTOFS_CONDS)$(SSH_CONDS)$(PAC_RESPONDER_CONDS)$(IFP_CONDS)$(GPO_CONDS)$(SYSTEMD_CONDS)$(KCM_CONDS)$(STAP_CONDS)$(KCM_RENEWAL_CONDS)$(LOCKFREE_CLIENT_CONDS)$(HAVE_INOTIFY_CONDS)$(PASSKEY_CONDS)$(FILES_PROVIDER_CONDS)$(SSSD_NON_ROOT_USER_CONDS)
+CONDS = with_false$(SUDO_CONDS)$(AUTOFS_CONDS)$(SSH_CONDS)$(PAC_RESPONDER_CONDS)$(IFP_CONDS)$(GPO_CONDS)$(SYSTEMD_CONDS)$(KCM_CONDS)$(STAP_CONDS)$(KCM_RENEWAL_CONDS)$(LOCKFREE_CLIENT_CONDS)$(HAVE_INOTIFY_CONDS)$(SUBID_CONDS)$(PASSKEY_CONDS)$(FILES_PROVIDER_CONDS)$(SSSD_NON_ROOT_USER_CONDS)$(LIBNL_CONDS)$(SAMBA_CONDS)
 
 
 #Special Rules:

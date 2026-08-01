@@ -751,6 +751,7 @@ done:
 #define LOCALAUTH_PLUGIN_CONFIG \
 "[plugins]\n" \
 " localauth = {\n" \
+"  disable = an2ln\n" \
 "  module = sssd:"APP_MODULES_PATH"/sssd_krb5_localauth_plugin.so\n" \
 " }\n"
 
@@ -920,8 +921,8 @@ static const char *domain_state_str(struct sss_domain_info *dom)
 
 enum sss_domain_state sss_domain_get_state(struct sss_domain_info *dom)
 {
-    DEBUG(SSSDBG_TRACE_LIBS,
-          "Domain %s is %s\n", dom->name, domain_state_str(dom));
+    DEBUG_CONDITIONAL(SSSDBG_TRACE_INTERNAL,
+                      "Domain %s is %s\n", dom->name, domain_state_str(dom));
     return dom->state;
 }
 

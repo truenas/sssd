@@ -3,11 +3,66 @@ Passkey Tests.
 
 :requirement: passkey
 
+Passkeys allow users to authenticate without having to enter a username or password,
+or provide any additional authentication factor.
+This technology aims to replace legacy authentication mechanisms such as passwords.
+
+The objective is to use a passkey to locally authenticate a user against centralized identity management system.
+For that purpose an integration with a server like AD/Samba or IPA or LDAP is needed.
+
 The passkey solution only enables to authenticate in a system where the
-FIDO2 key is connected physically.This could be su login, the GUI,
-or even ssh<user>@localhost.
+FIDO2 key is connected physically.This could be su login, the GDM login.
+The passkey is another way to authenticate as the user, using a physical token.
+
+We can't support remote authentication (ssh) because there isn't any way of doing the remote authentication
+when the key is attached to your laptop.
 Here, passkey support is tested with su, tests are running with
 umockdev, not with a physical key.
+
+We are creating the recording files and reusing them in test without having passkey connected to host.
+To create the recording files we have to connect passkey and need biometric
+authentication such as pin and finger touch.
+
+we use sssctl tool to create the passkey-mapping.
+# sssctl passkey-register --username=<username> --domain=<domain name>
+Next, it will ask for PIN and generate the passkey-mapping and token.
+
+.. code-block::
+    mapping = client.sssctl.passkey_register(
+        username="user1",
+        domain="ldap.test",
+        pin=123456,
+        device=f"{moduledatadir}/umockdev.device",
+        ioctl=f"{moduledatadir}/umockdev.ioctl",
+        script=f"{testdatadir}/umockdev.script",
+    )
+
+Once we add user along with passkey-mapping, we can test/assert the passkey authentication.
+While authenticating we need to username, pin of passkey and some recording files which will use for authenticating
+the user.
+
+.. code-block::
+    assert client.auth.su.passkey(
+        username="user1",
+        pin=123456,
+        device=f"{moduledatadir}/umockdev.device",
+        ioctl=f"{moduledatadir}/umockdev.ioctl",
+        script=f"{testdatadir}/umockdev.script.{suffix}",
+    )
+
+For IPA tests where we need to test commands after authentication of user, we the use following code.
+Here, we have an extra argument as a command to test in session after authentication of user.
+It returns returncode either 0 or 1 and output to fetch the console messages.
+
+.. code-block::
+    rc, _, output, _ = client.auth.su.passkey_with_output(
+        username="user1",
+        pin=123456,
+        device=f"{moduledatadir}/umockdev.device",
+        ioctl=f"{moduledatadir}/umockdev.ioctl",
+        script=f"{testdatadir}/umockdev.script.ipa",
+        command="klist",
+    )
 """
 
 from __future__ import annotations
@@ -21,7 +76,7 @@ from sssd_test_framework.topology import KnownTopology, KnownTopologyGroup
 
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopology.Client)
-@pytest.mark.builtwith(client="passkey")
+@pytest.mark.builtwith(client=["passkey", "umockdev"])
 def test_passkey__register_sssctl(client: Client, moduledatadir: str, testdatadir: str):
     """
     :title: Register a key with sssctl
@@ -50,7 +105,7 @@ def test_passkey__register_sssctl(client: Client, moduledatadir: str, testdatadi
 
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopology.IPA)
-@pytest.mark.builtwith(client="passkey", ipa="passkey")
+@pytest.mark.builtwith(client=["passkey", "umockdev"], ipa="passkey")
 def test_passkey__register_ipa(ipa: IPA, moduledatadir: str, testdatadir: str):
     """
     :title: Register a passkey with the IPA command
@@ -81,7 +136,7 @@ def test_passkey__register_ipa(ipa: IPA, moduledatadir: str, testdatadir: str):
 
 @pytest.mark.importance("critical")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
-@pytest.mark.builtwith(client="passkey", provider="passkey")
+@pytest.mark.builtwith(client=["passkey", "umockdev"], provider="passkey")
 def test_passkey__su_user(client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str):
     """
     :title: Check su authentication of user with LDAP, IPA, AD and Samba
@@ -114,7 +169,7 @@ def test_passkey__su_user(client: Client, provider: GenericProvider, moduledatad
 
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
-@pytest.mark.builtwith(client="passkey", provider="passkey")
+@pytest.mark.builtwith(client=["passkey", "umockdev"], provider="passkey")
 def test_passkey__su_user_with_failed_pin(
     client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
 ):
@@ -149,7 +204,7 @@ def test_passkey__su_user_with_failed_pin(
 
 @pytest.mark.importance("critical")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
-@pytest.mark.builtwith(client="passkey", provider="passkey")
+@pytest.mark.builtwith(client=["passkey", "umockdev"], provider="passkey")
 def test_passkey__su_user_with_incorrect_mapping(
     client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
 ):
@@ -186,7 +241,7 @@ def test_passkey__su_user_with_incorrect_mapping(
 
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
-@pytest.mark.builtwith(client="passkey", provider="passkey")
+@pytest.mark.builtwith(client=["passkey", "umockdev"], provider="passkey")
 def test_passkey__su_user_when_server_is_not_resolvable(
     client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
 ):
@@ -247,7 +302,7 @@ def test_passkey__su_user_when_server_is_not_resolvable(
 
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
-@pytest.mark.builtwith(client="passkey", provider="passkey")
+@pytest.mark.builtwith(client=["passkey", "umockdev"], provider="passkey")
 def test_passkey__su_user_when_offline(
     client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
 ):
@@ -304,7 +359,7 @@ def test_passkey__su_user_when_offline(
 
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
-@pytest.mark.builtwith(client="passkey", provider="passkey")
+@pytest.mark.builtwith(client=["passkey", "umockdev"], provider="passkey")
 def test_passkey__lookup_user_from_cache(
     client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
 ):
@@ -341,7 +396,7 @@ def test_passkey__lookup_user_from_cache(
 
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
-@pytest.mark.builtwith(client="passkey", provider="passkey")
+@pytest.mark.builtwith(client=["passkey", "umockdev"], provider="passkey")
 def test_passkey__su_user_with_multiple_keys(
     client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
 ):
@@ -379,7 +434,7 @@ def test_passkey__su_user_with_multiple_keys(
 
 @pytest.mark.importance("high")
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
-@pytest.mark.builtwith(client="passkey", provider="passkey")
+@pytest.mark.builtwith(client=["passkey", "umockdev"], provider="passkey")
 def test_passkey__su_user_same_key_for_other_users(
     client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
 ):
@@ -418,7 +473,7 @@ def test_passkey__su_user_same_key_for_other_users(
 @pytest.mark.ticket(jira="SSSD-7011", gh=7066)
 @pytest.mark.topology(KnownTopologyGroup.AnyAD)
 @pytest.mark.topology(KnownTopology.LDAP)
-@pytest.mark.builtwith(client="passkey", provider="passkey")
+@pytest.mark.builtwith(client=["passkey", "umockdev"], provider="passkey")
 def test_passkey__check_passkey_mapping_token_as_ssh_key_only(
     client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
 ):
@@ -454,7 +509,7 @@ def test_passkey__check_passkey_mapping_token_as_ssh_key_only(
 @pytest.mark.ticket(jira="SSSD-7011", gh=7066)
 @pytest.mark.topology(KnownTopologyGroup.AnyAD)
 @pytest.mark.topology(KnownTopology.LDAP)
-@pytest.mark.builtwith(client="passkey", provider="passkey")
+@pytest.mark.builtwith(client=["passkey", "umockdev"], provider="passkey")
 def test_passkey__su_user_when_add_with_ssh_key_and_mapping(
     client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str
 ):
@@ -492,3 +547,39 @@ def test_passkey__su_user_when_add_with_ssh_key_and_mapping(
 
     pam_log = client.fs.read(client.sssd.logs.pam)
     assert "Mapping data found is not passkey related" in pam_log, "String was not found in the logs"
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyProvider)
+@pytest.mark.builtwith(client=["passkey", "umockdev"], provider="passkey")
+def test_passkey__su_fips_fido_key(client: Client, provider: GenericProvider, moduledatadir: str, testdatadir: str):
+    """
+    :title: Check su authentication of user with LDAP, IPA, AD and Samba with FIPS Fido key
+    :setup:
+        1. Add a user in LDAP, IPA, AD and Samba with passkey_mapping.
+        2. Setup SSSD client with FIDO and umockdev, start SSSD service.
+    :steps:
+        1. Check su authentication of the user.
+    :expectedresults:
+        1. User su authenticates successfully.
+    :customerscenario: False
+    """
+    suffix = type(provider).__name__.lower()
+
+    client.sssd.domain["local_auth_policy"] = "enable:passkey"
+
+    # Recording files are created in FIPS enabled host with
+    # FIPS Fido key.
+
+    with open(f"{testdatadir}/passkey-mapping.{suffix}") as f:
+        provider.user("user1").add().passkey_add(f.read().strip())
+
+    client.sssd.start()
+
+    assert client.auth.su.passkey(
+        username="user1",
+        pin=123456,
+        device=f"{moduledatadir}/umockdev.device",
+        ioctl=f"{moduledatadir}/umockdev.ioctl",
+        script=f"{testdatadir}/umockdev.script.{suffix}",
+    )

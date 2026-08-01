@@ -66,6 +66,7 @@ struct dp_option ad_def_ldap_opts[] = {
     { "ldap_uri", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ldap_backup_uri", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ldap_search_base", DP_OPT_STRING, NULL_STRING, NULL_STRING },
+    { "ldap_read_rootdse", DP_OPT_STRING, { "anonymous" }, NULL_STRING },
     { "ldap_default_bind_dn", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ldap_default_authtok_type", DP_OPT_STRING, NULL_STRING, NULL_STRING},
     { "ldap_default_authtok", DP_OPT_BLOB, NULL_BLOB, NULL_BLOB },
@@ -117,7 +118,7 @@ struct dp_option ad_def_ldap_opts[] = {
     { "ldap_sasl_maxssf", DP_OPT_NUMBER, { .number = -1 }, NULL_NUMBER },
     { "ldap_krb5_keytab", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ldap_krb5_init_creds", DP_OPT_BOOL, BOOL_TRUE, BOOL_TRUE },
-    /* use the same parm name as the krb5 module so we set it only once */
+    /* use the same param name as the krb5 module so we set it only once */
     { "krb5_server", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "krb5_backup_server", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "krb5_realm", DP_OPT_STRING, NULL_STRING, NULL_STRING },
@@ -167,6 +168,7 @@ struct dp_option ad_def_ldap_opts[] = {
     { "ldap_pwdlockout_dn", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "wildcard_limit", DP_OPT_NUMBER, { .number = 1000 }, NULL_NUMBER},
     { "ldap_library_debug_level", DP_OPT_NUMBER, NULL_NUMBER, NULL_NUMBER},
+    { "ldap_subid_ranges_search_base", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     DP_OPTION_TERMINATOR
 };
 
@@ -322,6 +324,9 @@ struct dp_option ad_dyndns_opts[] = {
     { "dyndns_auth", DP_OPT_STRING, { "gss-tsig" }, NULL_STRING },
     { "dyndns_auth_ptr", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "dyndns_server", DP_OPT_STRING, NULL_STRING, NULL_STRING },
+    { "dyndns_dot_cacert", DP_OPT_STRING, NULL_STRING, NULL_STRING },
+    { "dyndns_dot_cert", DP_OPT_STRING, NULL_STRING, NULL_STRING },
+    { "dyndns_dot_key", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     DP_OPTION_TERMINATOR
 };
 
@@ -340,5 +345,12 @@ struct sdap_attr_map ad_sudorule_map[] = {
     { "ldap_sudorule_notafter", "sudoNotAfter", SYSDB_SUDO_CACHE_AT_NOTAFTER, NULL },
     { "ldap_sudorule_order", "sudoOrder", SYSDB_SUDO_CACHE_AT_ORDER, NULL },
     { "ldap_sudorule_entry_usn", NULL, SYSDB_USN, NULL },
+    SDAP_ATTR_MAP_TERMINATOR
+};
+
+struct sdap_attr_map ad_fsp_map[] = {
+    { "ldap_fsp_object_class", "foreignSecurityPrincipal", SYSDB_AD_FSP_CLASS, NULL },
+    { "ldap_fsp_name", "cn", SYSDB_NAME, NULL },
+    { "ldap_fsp_objectsid", "objectSID", SYSDB_SID, NULL },
     SDAP_ATTR_MAP_TERMINATOR
 };

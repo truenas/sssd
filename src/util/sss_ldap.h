@@ -47,9 +47,7 @@
 
 const char* sss_ldap_err2string(int err);
 
-int sss_ldap_get_diagnostic_msg(TALLOC_CTX *mem_ctx,
-                                LDAP *ld,
-                                char **_errmsg);
+void sss_ldap_error_debug(int level, const char *msg, LDAP *ld, int error_code);
 
 #ifndef LDAP_SERVER_ASQ_OID
 #define LDAP_SERVER_ASQ_OID "1.2.840.113556.1.4.1504"

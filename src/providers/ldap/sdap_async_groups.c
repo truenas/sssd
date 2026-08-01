@@ -335,43 +335,6 @@ done:
     return ret;
 }
 
-/* ==Save-Group-Entry===================================================== */
-
-    /* FIXME: support non legacy */
-    /* FIXME: support storing additional attributes */
-
-static errno_t
-sdap_store_group_with_gid(struct sss_domain_info *domain,
-                          const char *name,
-                          gid_t gid,
-                          struct sysdb_attrs *group_attrs,
-                          uint64_t cache_timeout,
-                          bool posix_group,
-                          time_t now)
-{
-    errno_t ret;
-
-    /* make sure that non-POSIX (empty or explicit gid=0) groups have the
-     * gidNumber set to zero even if updating existing group */
-    if (!posix_group) {
-        ret = sysdb_attrs_add_uint32(group_attrs, SYSDB_GIDNUM, 0);
-        if (ret) {
-            DEBUG(SSSDBG_OP_FAILURE,
-                  "Could not set explicit GID 0 for %s\n", name);
-            return ret;
-        }
-    }
-
-    ret = sysdb_store_group(domain, name, gid, group_attrs,
-                            cache_timeout, now);
-    if (ret) {
-        DEBUG(SSSDBG_OP_FAILURE, "Could not store group %s\n", name);
-        return ret;
-    }
-
-    return ret;
-}
-
 static errno_t
 sdap_process_ghost_members(struct sysdb_attrs *attrs,
                            struct sdap_options *opts,
@@ -586,7 +549,6 @@ static int sdap_save_group(TALLOC_CTX *memctx,
     }
     if (need_filter) {
         posix_group = false;
-        gid = 0;
 
         ret = sysdb_attrs_add_bool(group_attrs, SYSDB_POSIX, false);
         if (ret != EOK) {
@@ -658,15 +620,17 @@ static int sdap_save_group(TALLOC_CTX *memctx,
                 goto done;
             }
 
-            ret = sysdb_attrs_get_uint32_t(attrs,
-                                           opts->group_map[SDAP_AT_GROUP_GID].sys_name,
-                                           &gid);
-            if (ret != EOK) {
-                DEBUG(SSSDBG_CRIT_FAILURE,
-                      "no gid provided for [%s] in domain [%s].\n",
-                          group_name, dom->name);
-                ret = EINVAL;
-                goto done;
+            if (posix_group) {
+                ret = sysdb_attrs_get_uint32_t(attrs,
+                                               opts->group_map[SDAP_AT_GROUP_GID].sys_name,
+                                               &gid);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_CRIT_FAILURE,
+                          "no gid provided for [%s] in domain [%s].\n",
+                              group_name, dom->name);
+                    ret = EINVAL;
+                    goto done;
+                }
             }
         }
     }
@@ -746,13 +710,12 @@ static int sdap_save_group(TALLOC_CTX *memctx,
     }
     DEBUG(SSSDBG_TRACE_FUNC, "Storing info for group %s\n", group_name);
 
-    ret = sdap_store_group_with_gid(dom, group_name, gid, group_attrs,
-                                    dom->group_timeout,
-                                    posix_group, now);
+    ret = sysdb_store_group(dom, group_name, gid, group_attrs,
+                            dom->group_timeout, now);
     if (ret) {
         DEBUG(SSSDBG_MINOR_FAILURE,
-              "Could not store group with GID: [%s]\n",
-               sss_strerror(ret));
+              "Could not store group [%s] with GID [%u]: [%s]\n",
+              group_name, gid, sss_strerror(ret));
         goto done;
     }
 
@@ -779,7 +742,7 @@ are_sids_from_same_dom(const char *sid1, const char *sid2, bool *_result)
 {
     size_t len_prefix_sid1;
     size_t len_prefix_sid2;
-    char *rid1, *rid2;
+    const char *rid1, *rid2;
     bool result;
 
     rid1 = strrchr(sid1, '-');
@@ -1943,7 +1906,7 @@ static void sdap_get_groups_process(struct tevent_req *subreq)
     bool next_base = false;
     size_t count;
     struct sysdb_attrs **groups;
-    char **sysdb_groupnamelist;
+
 
     ret = sdap_get_and_parse_generic_recv(subreq, state,
                                           &count, &groups);
@@ -1999,22 +1962,8 @@ static void sdap_get_groups_process(struct tevent_req *subreq)
     }
 
     if (state->no_members) {
-        ret = sdap_get_primary_fqdn_list(state->dom, state,
-                                state->groups, state->count,
-                                state->opts->group_map[SDAP_AT_GROUP_NAME].name,
-                                state->opts->group_map[SDAP_AT_GROUP_OBJECTSID].name,
-                                state->opts->idmap_ctx,
-                                &sysdb_groupnamelist);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_OP_FAILURE,
-                  "sysdb_attrs_primary_name_list failed.\n");
-            tevent_req_error(req, ret);
-            return;
-        }
-
         ret = sdap_add_incomplete_groups(state->sysdb, state->dom, state->opts,
-                                         sysdb_groupnamelist, state->groups,
-                                         state->count);
+                                         state->groups, state->count);
         if (ret == EOK) {
             DEBUG(SSSDBG_TRACE_LIBS,
                   "Writing only group data without members was successful.\n");

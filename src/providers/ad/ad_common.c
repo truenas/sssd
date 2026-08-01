@@ -122,6 +122,16 @@ ad_create_default_sdap_options(TALLOC_CTX *mem_ctx,
         goto fail;
     }
 
+    /* Foreign Security Principal (FSP) map */
+    ret = sdap_copy_map(id_opts,
+                        ad_fsp_map,
+                        SDAP_OPTS_FSP,
+                        &id_opts->fsp_map);
+    if (ret != EOK) {
+        goto fail;
+    }
+    id_opts->fsp_map_cnt = SDAP_OPTS_FSP;
+
     return id_opts;
 
 fail:
@@ -255,6 +265,17 @@ ad_create_sdap_options(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
+    /* Foreign Security Principal (FSP) map */
+    ret = sdap_get_map(id_opts,
+                       cdb, conf_path,
+                       ad_fsp_map,
+                       SDAP_OPTS_FSP,
+                       &id_opts->fsp_map);
+    if (ret != EOK) {
+        goto done;
+    }
+    id_opts->fsp_map_cnt = SDAP_OPTS_FSP;
+
     ret = EOK;
 done:
     if (ret == EOK) {
@@ -353,60 +374,21 @@ set_common_ad_trust_opts(struct ad_options *ad_options,
 }
 
 struct ad_options *
-ad_create_2way_trust_options(TALLOC_CTX *mem_ctx,
-                             struct confdb_ctx *cdb,
-                             const char *conf_path,
-                             struct data_provider *dp,
-                             const char *realm,
-                             struct sss_domain_info *subdom,
-                             const char *hostname,
-                             const char *keytab)
+ad_create_trust_options(TALLOC_CTX *mem_ctx,
+                        struct confdb_ctx *cdb,
+                        const char *subdom_conf_path,
+                        struct data_provider *dp,
+                        struct sss_domain_info *subdom,
+                        const char *realm,
+                        const char *hostname,
+                        const char *keytab,
+                        const char *sasl_authid)
 {
     struct ad_options *ad_options;
     errno_t ret;
+    const char *upper_realm = NULL;
 
-    DEBUG(SSSDBG_TRACE_FUNC, "2way trust is defined to domain '%s'\n",
-          subdom->name);
-
-    ad_options = ad_create_options(mem_ctx, cdb, conf_path, dp, subdom);
-    if (ad_options == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "ad_create_options failed\n");
-        return NULL;
-    }
-
-    ret = set_common_ad_trust_opts(ad_options, realm, subdom->name, hostname,
-                                   keytab);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "set_common_ad_trust_opts failed\n");
-        talloc_free(ad_options);
-        return NULL;
-    }
-
-    ret = ad_set_sdap_options(ad_options, ad_options->id);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "ad_set_sdap_options failed\n");
-        talloc_free(ad_options);
-        return NULL;
-    }
-
-    return ad_options;
-}
-
-struct ad_options *
-ad_create_1way_trust_options(TALLOC_CTX *mem_ctx,
-                             struct confdb_ctx *cdb,
-                             const char *subdom_conf_path,
-                             struct data_provider *dp,
-                             struct sss_domain_info *subdom,
-                             const char *hostname,
-                             const char *keytab,
-                             const char *sasl_authid)
-{
-    struct ad_options *ad_options;
-    const char *realm;
-    errno_t ret;
-
-    DEBUG(SSSDBG_TRACE_FUNC, "1way trust is defined to domain '%s'\n",
+    DEBUG(SSSDBG_TRACE_FUNC, "trust is defined to domain '%s'\n",
           subdom->name);
 
     ad_options = ad_create_options(mem_ctx, cdb, subdom_conf_path, dp, subdom);
@@ -415,14 +397,16 @@ ad_create_1way_trust_options(TALLOC_CTX *mem_ctx,
         return NULL;
     }
 
-    realm = get_uppercase_realm(ad_options, subdom->name);
-    if (!realm) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Failed to get uppercase realm\n");
-        talloc_free(ad_options);
-        return NULL;
+    if (realm == NULL) {
+        upper_realm = get_uppercase_realm(ad_options, subdom->name);
+        if (upper_realm == NULL) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "Failed to get uppercase realm\n");
+            talloc_free(ad_options);
+            return NULL;
+        }
     }
 
-    ret = set_common_ad_trust_opts(ad_options, realm,
+    ret = set_common_ad_trust_opts(ad_options, (realm == NULL ? upper_realm : realm),
                                    subdom->name, hostname, keytab);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
@@ -433,12 +417,14 @@ ad_create_1way_trust_options(TALLOC_CTX *mem_ctx,
     }
 
     /* Set SDAP_SASL_AUTHID to the trust principal */
-    ret = dp_opt_set_string(ad_options->id->basic,
-                            SDAP_SASL_AUTHID, sasl_authid);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, "Cannot set SASL authid\n");
-        talloc_free(ad_options);
-        return NULL;
+    if (sasl_authid != NULL) {
+        ret = dp_opt_set_string(ad_options->id->basic,
+                                SDAP_SASL_AUTHID, sasl_authid);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "Cannot set SASL authid\n");
+            talloc_free(ad_options);
+            return NULL;
+        }
     }
 
     ret = ad_set_sdap_options(ad_options, ad_options->id);
@@ -1652,11 +1638,11 @@ ad_user_conn_list(TALLOC_CTX *mem_ctx,
     return clist;
 }
 
-errno_t ad_inherit_opts_if_needed(struct dp_option *parent_opts,
-                                  struct dp_option *subdom_opts,
-                                  struct confdb_ctx *cdb,
-                                  const char *subdom_conf_path,
-                                  int opt_id)
+errno_t subdom_inherit_opts_if_needed(struct dp_option *parent_opts,
+                                      struct dp_option *subdom_opts,
+                                      struct confdb_ctx *cdb,
+                                      const char *subdom_conf_path,
+                                      int opt_id)
 {
     int ret;
     bool is_default = true;
@@ -1671,7 +1657,7 @@ errno_t ad_inherit_opts_if_needed(struct dp_option *parent_opts,
          * both possible values are valid ones. So we check if the value is
          * different from the default and skip if it is the default. In this
          * case the sub-domain option would either be the default as well or
-         * manully set and in both cases we do not have to change it. */
+         * manually set and in both cases we do not have to change it. */
         is_default = (parent_opts[opt_id].val.boolean
                           == parent_opts[opt_id].def_val.boolean);
         break;

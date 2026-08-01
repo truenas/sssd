@@ -37,22 +37,20 @@ const char* sss_ldap_err2string(int err)
     }
 }
 
-int sss_ldap_get_diagnostic_msg(TALLOC_CTX *mem_ctx, LDAP *ld, char **_errmsg)
+void sss_ldap_error_debug(int level, const char *msg, LDAP *ld, int error_code)
 {
-    char *errmsg = NULL;
-    int optret;
+    char *diagnostics = NULL;
+    int ret;
 
-    optret = ldap_get_option(ld, SDAP_DIAGNOSTIC_MESSAGE, (void*)&errmsg);
-    if (optret != LDAP_SUCCESS) {
-        return EINVAL;
-    }
+    ret = ldap_get_option(ld, SDAP_DIAGNOSTIC_MESSAGE, (void*)&diagnostics);
 
-    *_errmsg = talloc_strdup(mem_ctx, errmsg ? errmsg : "unknown error");
-    ldap_memfree(errmsg);
-    if (*_errmsg == NULL) {
-        return ENOMEM;
+    DEBUG(level, "%s: '%s' ('%s')\n", msg,
+          sss_ldap_err2string(error_code),
+          ((ret == LDAP_SUCCESS) ? diagnostics : "-no diagnostics-"));
+
+    if (ret == LDAP_SUCCESS) {
+        ldap_memfree(diagnostics);
     }
-    return EOK;
 }
 
 int sss_ldap_control_create(const char *oid, int iscritical,
@@ -233,10 +231,8 @@ static void sss_ldap_init_sys_connect_done(struct tevent_req *subreq)
                                                       struct tevent_req);
     struct sss_ldap_init_state *state = tevent_req_data(req,
                                                     struct sss_ldap_init_state);
-    char *tlserr;
     int ret;
     int lret;
-    int optret;
     int ticks_before_install;
     int ticks_after_install;
 
@@ -288,22 +284,9 @@ static void sss_ldap_init_sys_connect_done(struct tevent_req *subreq)
             if (lret == LDAP_LOCAL_ERROR) {
                 DEBUG(SSSDBG_FUNC_DATA, "TLS/SSL already in place.\n");
             } else {
-
-                optret = sss_ldap_get_diagnostic_msg(state, state->ldap,
-                                                     &tlserr);
-                if (optret == LDAP_SUCCESS) {
-                    DEBUG(SSSDBG_CRIT_FAILURE,
-                          "ldap_install_tls failed: [%s] [%s]\n",
-                          sss_ldap_err2string(lret), tlserr);
-                    sss_log(SSS_LOG_ERR,
-                            "Could not start TLS encryption. %s", tlserr);
-                } else {
-                    DEBUG(SSSDBG_CRIT_FAILURE,
-                          "ldap_install_tls failed: [%s]\n",
-                          sss_ldap_err2string(lret));
-                    sss_log(SSS_LOG_ERR, "Could not start TLS encryption. "
-                                         "Check for certificate issues.");
-                }
+                sss_ldap_error_debug(SSSDBG_CRIT_FAILURE, "ldap_install_tls failed",
+                                     state->ldap, lret);
+                sss_log(SSS_LOG_ERR, "Could not start TLS encryption.");
 
                 if (ticks_after_install > ticks_before_install) {
                     ret = ERR_TLS_HANDSHAKE_INTERRUPTED;

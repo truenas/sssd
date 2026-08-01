@@ -40,6 +40,13 @@ struct sdap_rebind_proc_params {
     bool use_start_tls;
 };
 
+enum sdap_rootdse_read_opts {
+    SDAP_ROOTDSE_READ_ANONYMOUS,
+    SDAP_ROOTDSE_READ_AUTHENTICATED,
+    SDAP_ROOTDSE_READ_NEVER,
+    SDAP_ROOTDSE_READ_INVALID,
+};
+
 static int sdap_rebind_proc(LDAP *ldap, LDAP_CONST char *url, ber_tag_t request,
                             ber_int_t msgid, void *params);
 
@@ -137,10 +144,8 @@ static void sdap_sys_connect_done(struct tevent_req *subreq)
     struct timeval tv;
     int ver;
     int lret = 0;
-    int optret;
     int ret = EOK;
     int msgid;
-    char *errmsg = NULL;
     bool ldap_referrals;
     const char *ldap_deref;
     int ldap_deref_val;
@@ -277,6 +282,7 @@ static void sdap_sys_connect_done(struct tevent_req *subreq)
               "Failed to set LDAP SASL nocanon option to %s. If your system "
                "is configured to use SASL, LDAP operations might fail.\n",
               sasl_nocanon ? "true" : "false");
+        sss_ldap_error_debug(SSSDBG_MINOR_FAILURE, "libldap error", state->sh->ldap, lret);
         sss_log(SSS_LOG_INFO,
                 "Failed to set LDAP SASL nocanon option to %s. If your system "
                 "is configured to use SASL, LDAP operations might fail.\n",
@@ -321,20 +327,9 @@ static void sdap_sys_connect_done(struct tevent_req *subreq)
 
     lret = ldap_start_tls(state->sh->ldap, NULL, NULL, &msgid);
     if (lret != LDAP_SUCCESS) {
-        optret = sss_ldap_get_diagnostic_msg(state, state->sh->ldap,
-                                             &errmsg);
-        if (optret == LDAP_SUCCESS) {
-            DEBUG(SSSDBG_MINOR_FAILURE, "ldap_start_tls failed: [%s] [%s]\n",
-                      sss_ldap_err2string(lret),
-                      errmsg);
-            sss_log(SSS_LOG_ERR, "Could not start TLS. %s", errmsg);
-        }
-        else {
-            DEBUG(SSSDBG_MINOR_FAILURE, "ldap_start_tls failed: [%s]\n",
-                      sss_ldap_err2string(lret));
-            sss_log(SSS_LOG_ERR, "Could not start TLS. "
-                                 "Check for certificate issues.");
-        }
+        sss_ldap_error_debug(SSSDBG_MINOR_FAILURE, "ldap_start_tls failed",
+                             state->sh->ldap, lret);
+        sss_log(SSS_LOG_ERR, "Could not start TLS.");
         goto fail;
     }
 
@@ -379,9 +374,7 @@ static void sdap_connect_done(struct sdap_op *op,
     struct sdap_connect_state *state = tevent_req_data(req,
                                           struct sdap_connect_state);
     char *errmsg = NULL;
-    char *tlserr;
     int ret;
-    int optret;
 
     if (error) {
         tevent_req_error(req, error);
@@ -412,22 +405,9 @@ static void sdap_connect_done(struct sdap_op *op,
 /* FIXME: take care that ldap_install_tls might block */
     ret = ldap_install_tls(state->sh->ldap);
     if (ret != LDAP_SUCCESS) {
-
-        optret = sss_ldap_get_diagnostic_msg(state, state->sh->ldap,
-                                             &tlserr);
-        if (optret == LDAP_SUCCESS) {
-            DEBUG(SSSDBG_MINOR_FAILURE, "ldap_install_tls failed: [%s] [%s]\n",
-                      sss_ldap_err2string(ret),
-                      tlserr);
-            sss_log(SSS_LOG_ERR, "Could not start TLS encryption. %s", tlserr);
-        }
-        else {
-            DEBUG(SSSDBG_MINOR_FAILURE, "ldap_install_tls failed: [%s]\n",
-                      sss_ldap_err2string(ret));
-            sss_log(SSS_LOG_ERR, "Could not start TLS encryption. "
-                                 "Check for certificate issues.");
-        }
-
+        sss_ldap_error_debug(SSSDBG_MINOR_FAILURE, "ldap_install_tls failed",
+                             state->sh->ldap, ret);
+        sss_log(SSS_LOG_ERR, "Could not start TLS encryption.");
         state->result = ret;
         tevent_req_error(req, EIO);
         return;
@@ -643,6 +623,7 @@ struct simple_bind_state {
     struct tevent_context *ev;
     struct sdap_handle *sh;
     const char *user_dn;
+    enum pwmodify_mode pwmodify_mode;
 
     struct sdap_op *op;
 
@@ -659,7 +640,8 @@ static struct tevent_req *simple_bind_send(TALLOC_CTX *memctx,
                                            struct sdap_handle *sh,
                                            int timeout,
                                            const char *user_dn,
-                                           struct berval *pw)
+                                           struct berval *pw,
+                                           enum pwmodify_mode pwmodify_mode)
 {
     struct tevent_req *req;
     struct simple_bind_state *state;
@@ -682,6 +664,7 @@ static struct tevent_req *simple_bind_send(TALLOC_CTX *memctx,
     state->ev = ev;
     state->sh = sh;
     state->user_dn = user_dn;
+    state->pwmodify_mode = pwmodify_mode;
 
     ret = sss_ldap_control_create(LDAP_CONTROL_PASSWORDPOLICYREQUEST,
                                   0, NULL, 0, &ctrls[0]);
@@ -866,7 +849,12 @@ static void simple_bind_done(struct sdap_op *op,
                      * Grace Authentications". */
                     DEBUG(SSSDBG_TRACE_LIBS,
                           "Password expired, grace logins exhausted.\n");
-                    ret = ERR_AUTH_FAILED;
+                    if (state->pwmodify_mode == SDAP_PWMODIFY_EXOP_FORCE) {
+                        DEBUG(SSSDBG_TRACE_LIBS, "Password change forced.\n");
+                        ret = ERR_PASSWORD_EXPIRED;
+                    } else {
+                        ret = ERR_AUTH_FAILED;
+                    }
                 }
             } else if (strcmp(response_controls[c]->ldctl_oid,
                               LDAP_CONTROL_PWEXPIRED) == 0) {
@@ -879,7 +867,12 @@ static void simple_bind_done(struct sdap_op *op,
                 if (result == LDAP_INVALID_CREDENTIALS) {
                     DEBUG(SSSDBG_TRACE_LIBS,
                           "Password expired, grace logins exhausted.\n");
-                    ret = ERR_AUTH_FAILED;
+                    if (state->pwmodify_mode == SDAP_PWMODIFY_EXOP_FORCE) {
+                        DEBUG(SSSDBG_TRACE_LIBS, "Password change forced.\n");
+                        ret = ERR_PASSWORD_EXPIRED;
+                    } else {
+                        ret = ERR_AUTH_FAILED;
+                    }
                 } else {
                     DEBUG(SSSDBG_TRACE_LIBS,
                           "Password expired, user must set a new password.\n");
@@ -989,8 +982,6 @@ static struct tevent_req *sasl_bind_send(TALLOC_CTX *memctx,
     struct tevent_req *req;
     struct sasl_bind_state *state;
     int ret = EOK;
-    int optret;
-    char *diag_msg = NULL;
 
     req = tevent_req_create(memctx, &state, struct sasl_bind_state);
     if (!req) return NULL;
@@ -1019,18 +1010,8 @@ static struct tevent_req *sasl_bind_send(TALLOC_CTX *memctx,
                                        LDAP_SASL_QUIET,
                                        (*sdap_sasl_interact), state);
     if (ret != LDAP_SUCCESS) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "ldap_sasl_interactive_bind_s failed (%d)[%s]\n",
-               ret, sss_ldap_err2string(ret));
-
-        optret = sss_ldap_get_diagnostic_msg(state, state->sh->ldap,
-                                             &diag_msg);
-        if (optret == EOK) {
-            DEBUG(SSSDBG_MINOR_FAILURE,
-                  "Extended failure message: [%s]\n", diag_msg);
-        }
-        talloc_zfree(diag_msg);
-
+        sss_ldap_error_debug(SSSDBG_CRIT_FAILURE, "ldap_sasl_interactive_bind_s failed",
+                             state->sh->ldap, ret);
         goto fail;
     }
 
@@ -1358,7 +1339,8 @@ struct tevent_req *sdap_auth_send(TALLOC_CTX *memctx,
                                   const char *sasl_user,
                                   const char *user_dn,
                                   struct sss_auth_token *authtok,
-                                  int simple_bind_timeout)
+                                  int simple_bind_timeout,
+                                  enum pwmodify_mode pwmodify_mode)
 {
     struct tevent_req *req, *subreq;
     struct sdap_auth_state *state;
@@ -1397,7 +1379,7 @@ struct tevent_req *sdap_auth_send(TALLOC_CTX *memctx,
         pw.bv_len = pwlen;
 
         state->is_sasl = false;
-        subreq = simple_bind_send(state, ev, sh, simple_bind_timeout, user_dn, &pw);
+        subreq = simple_bind_send(state, ev, sh, simple_bind_timeout, user_dn, &pw, pwmodify_mode);
         if (!subreq) {
             tevent_req_error(req, ENOMEM);
             return tevent_req_post(req, ev);
@@ -1475,6 +1457,7 @@ struct sdap_cli_connect_state {
     struct be_ctx *be;
 
     bool use_rootdse;
+    enum sdap_rootdse_read_opts rootdse_access;
     struct sysdb_attrs *rootdse;
 
     struct sdap_handle *sh;
@@ -1503,6 +1486,35 @@ static void sdap_cli_auth_done(struct tevent_req *subreq);
 static errno_t sdap_cli_auth_reconnect(struct tevent_req *subreq);
 static void sdap_cli_auth_reconnect_done(struct tevent_req *subreq);
 static void sdap_cli_rootdse_auth_done(struct tevent_req *subreq);
+
+
+enum sdap_rootdse_read_opts
+decide_rootdse_access(struct dp_option *basic)
+{
+    int i;
+    char *str;
+    struct read_rootdse_enum_str {
+        enum sdap_rootdse_read_opts option_enum;
+        const char *option_str;
+    };
+    static struct read_rootdse_enum_str read_rootdse_enum_str[] = {
+        { SDAP_ROOTDSE_READ_ANONYMOUS, "anonymous"},
+        { SDAP_ROOTDSE_READ_AUTHENTICATED, "authenticated"},
+        { SDAP_ROOTDSE_READ_NEVER, "never"},
+        { SDAP_ROOTDSE_READ_INVALID, NULL}
+    };
+
+    str = dp_opt_get_string (basic, SDAP_READ_ROOTDSE);
+    for (i = 0; read_rootdse_enum_str[i].option_str != NULL; i++) {
+        if (strcasecmp(read_rootdse_enum_str[i].option_str, str) == 0) {
+            return read_rootdse_enum_str[i].option_enum;
+        }
+    }
+    DEBUG(SSSDBG_CONF_SETTINGS,
+          "The ldap_read_rootdse option has an invalid value [%s], "
+          "using [anonymous]\n", str);
+    return SDAP_ROOTDSE_READ_ANONYMOUS;
+}
 
 static errno_t
 decide_tls_usage(enum connect_tls force_tls, struct dp_option *basic,
@@ -1558,6 +1570,7 @@ struct tevent_req *sdap_cli_connect_send(TALLOC_CTX *memctx,
     state->srv = NULL;
     state->srv_opts = NULL;
     state->use_rootdse = !skip_rootdse;
+    state->rootdse_access = decide_rootdse_access (opts->basic);
     state->force_tls = force_tls;
     state->do_auth = !skip_auth;
 
@@ -1674,7 +1687,9 @@ static void sdap_cli_connect_done(struct tevent_req *subreq)
     }
     state->retry_attempts = 0;
 
-    if (state->use_rootdse) {
+    if (state->use_rootdse &&
+        state->rootdse_access == SDAP_ROOTDSE_READ_ANONYMOUS) {
+
         /* fetch the rootDSE this time */
         sdap_cli_rootdse_step(req);
         return;
@@ -1682,7 +1697,9 @@ static void sdap_cli_connect_done(struct tevent_req *subreq)
 
     sasl_mech = dp_opt_get_string(state->opts->basic, SDAP_SASL_MECH);
 
-    if (state->do_auth && sasl_mech && state->use_rootdse) {
+    if (state->do_auth && sasl_mech && state->use_rootdse &&
+        state->rootdse_access == SDAP_ROOTDSE_READ_ANONYMOUS) {
+
         /* check if server claims to support the configured SASL MECH */
         if (!sdap_is_sasl_mech_supported(state->sh, sasl_mech)) {
             tevent_req_error(req, ENOTSUP);
@@ -1972,7 +1989,8 @@ static void sdap_cli_auth_step(struct tevent_req *req)
                                               SDAP_SASL_AUTHID),
                             user_dn, authtok,
                             dp_opt_get_int(state->opts->basic,
-                                           SDAP_OPT_TIMEOUT));
+                                           SDAP_OPT_TIMEOUT),
+                            state->opts->pwmodify_mode);
     talloc_free(authtok);
     if (!subreq) {
         tevent_req_error(req, ENOMEM);
@@ -2073,9 +2091,12 @@ static void sdap_cli_auth_done(struct tevent_req *subreq)
         return;
     }
 
-    if (state->use_rootdse && !state->rootdse) {
-        /* We weren't able to read rootDSE during unauthenticated bind.
-         * Let's try again now that we are authenticated */
+    if (state->use_rootdse && !state->rootdse &&
+        state->rootdse_access != SDAP_ROOTDSE_READ_NEVER) {
+        /* We did not read rootDSE during unauthenticated bind becase
+         * it is unaccessible for anonymous user or because
+         * ldap_read_rootdse is set to "authenticated"
+         * Let's try to read it now */
         subreq = sdap_get_rootdse_send(state, state->ev,
                                        state->opts, state->sh);
         if (!subreq) {
@@ -2201,11 +2222,9 @@ int sdap_cli_connect_recv(struct tevent_req *req,
 static int synchronous_tls_setup(LDAP *ldap)
 {
     int lret;
-    int optret;
     int ldaperr;
     int msgid;
     char *errmsg = NULL;
-    char *diag_msg;
     LDAPMessage *result = NULL;
     TALLOC_CTX *tmp_ctx;
 
@@ -2216,17 +2235,9 @@ static int synchronous_tls_setup(LDAP *ldap)
 
     lret = ldap_start_tls(ldap, NULL, NULL, &msgid);
     if (lret != LDAP_SUCCESS) {
-        optret = sss_ldap_get_diagnostic_msg(tmp_ctx, ldap, &diag_msg);
-        if (optret == LDAP_SUCCESS) {
-            DEBUG(SSSDBG_MINOR_FAILURE, "ldap_start_tls failed: [%s] [%s]\n",
-                      sss_ldap_err2string(lret), diag_msg);
-            sss_log(SSS_LOG_ERR, "Could not start TLS. %s", diag_msg);
-        } else {
-            DEBUG(SSSDBG_MINOR_FAILURE,
-                  "ldap_start_tls failed: [%s]\n", sss_ldap_err2string(lret));
-            sss_log(SSS_LOG_ERR, "Could not start TLS. "
-                                 "Check for certificate issues.");
-        }
+        sss_ldap_error_debug(SSSDBG_MINOR_FAILURE, "ldap_start_tls failed",
+                             ldap, lret);
+        sss_log(SSS_LOG_ERR, "Could not start TLS.");
         goto done;
     }
 
@@ -2259,19 +2270,9 @@ static int synchronous_tls_setup(LDAP *ldap)
 
     lret = ldap_install_tls(ldap);
     if (lret != LDAP_SUCCESS) {
-
-        optret = sss_ldap_get_diagnostic_msg(tmp_ctx, ldap, &diag_msg);
-        if (optret == LDAP_SUCCESS) {
-            DEBUG(SSSDBG_MINOR_FAILURE, "ldap_install_tls failed: [%s] [%s]\n",
-                      sss_ldap_err2string(lret), diag_msg);
-            sss_log(SSS_LOG_ERR, "Could not start TLS encryption. %s", diag_msg);
-        } else {
-            DEBUG(SSSDBG_MINOR_FAILURE, "ldap_install_tls failed: [%s]\n",
-                      sss_ldap_err2string(lret));
-            sss_log(SSS_LOG_ERR, "Could not start TLS encryption. "
-                                 "Check for certificate issues.");
-        }
-
+        sss_ldap_error_debug(SSSDBG_MINOR_FAILURE, "ldap_install_tls failed",
+                             ldap, lret);
+        sss_log(SSS_LOG_ERR, "Could not start TLS encryption.");
         goto done;
     }
 

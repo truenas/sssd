@@ -495,7 +495,7 @@ copy_smb_file_to_gpo_cache(SMBCCTX *smbc_ctx,
                       smb_uri);
                 /* It looks like Windows clients treat missing GPO files as
                  * empty. To make sure we do not use old and now invalid
-                 * content an potentially exising old file will be removed. */
+                 * content and potentially existing old file will be removed. */
                 ret = gpo_cache_remove_file(smb_path, smb_cse_suffix);
                 if (ret != EOK && ret != ENOENT) {
                     DEBUG(SSSDBG_CRIT_FAILURE,
@@ -660,6 +660,7 @@ main(int argc, const char *argv[])
     int opt;
     poptContext pc;
     int dumpable = 1;
+    int backtrace = 1;
     int debug_fd = -1;
     long chain_id = 0;
     const char *opt_logger = NULL;
@@ -678,6 +679,8 @@ main(int argc, const char *argv[])
         SSSD_DEBUG_OPTS
         {"dumpable", 0, POPT_ARG_INT, &dumpable, 0,
          _("Allow core dumps"), NULL },
+        {"backtrace", 0, POPT_ARG_INT, &backtrace, 0,
+         _("Enable debug backtrace"), NULL },
         {"debug-fd", 0, POPT_ARG_INT, &debug_fd, 0,
          _("An open file descriptor for the debug logs"), NULL},
         {"chain-id", 0, POPT_ARG_LONG, &chain_id,
@@ -723,6 +726,7 @@ main(int argc, const char *argv[])
     sss_chain_id_set((uint64_t)chain_id);
 
     DEBUG_INIT(debug_level, opt_logger);
+    sss_set_debug_backtrace_enable((backtrace == 0) ? false : true);
 
     DEBUG(SSSDBG_TRACE_FUNC, "gpo_child started.\n");
 

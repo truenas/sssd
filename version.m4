@@ -1,5 +1,5 @@
 # Primary version number
-m4_define([VERSION_NUMBER], [2.9.5])
+m4_define([VERSION_NUMBER], [2.9.9])
 
 # If the PRERELEASE_VERSION_NUMBER is set, we'll append
 # it to the release tag when creating an RPM or SRPM
@@ -9,4 +9,3 @@ m4_define([VERSION_NUMBER], [2.9.5])
 # and would result in an SRPM looking like:
 # sssd-0.5.0-0.20090915gitf1bcde7.fc11.src.rpm
 m4_define([PRERELEASE_VERSION_NUMBER], [])
-

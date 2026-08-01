@@ -35,7 +35,6 @@
 #include "confdb/confdb.h"
 #ifdef BUILD_PASSKEY
 #include "src/responder/pam/pamsrv_passkey.h"
-#include "db/sysdb_passkey_user_verification.h"
 #endif
 
 #include "util/crypto/sss_crypto.h"
@@ -46,6 +45,12 @@
 #include "tests/test_CA/SSSD_test_cert_x509_0005.h"
 #include "tests/test_CA/SSSD_test_cert_x509_0006.h"
 #include "tests/test_CA/SSSD_test_cert_x509_0007.h"
+#ifdef HAVE_FAKETIME
+#include "tests/test_CA/SSSD_test_cert_x509_0008.h"
+#else
+#define SSSD_TEST_CERT_0008 ""
+#endif
+#include "tests/test_CA/SSSD_test_cert_x509_0009.h"
 #include "tests/test_CA/intermediate_CA/SSSD_test_intermediate_CA_cert_x509_0001.h"
 #include "tests/test_ECC_CA/SSSD_test_ECC_cert_x509_0001.h"
 #else
@@ -54,6 +59,8 @@
 #define SSSD_TEST_CERT_0005 ""
 #define SSSD_TEST_CERT_0006 ""
 #define SSSD_TEST_CERT_0007 ""
+#define SSSD_TEST_CERT_0008 ""
+#define SSSD_TEST_CERT_0009 ""
 #define SSSD_TEST_INTERMEDIATE_CA_CERT_0001 ""
 #define SSSD_TEST_ECC_CERT_0001 ""
 #endif
@@ -84,6 +91,17 @@
 #define TEST2_LABEL "SSSD test cert 0002"
 #define TEST5_KEY_ID "1195833C424AB00297F582FC43FFFFAB47A64CC9"
 #define TEST5_LABEL "SSSD test cert 0005"
+
+
+#define TEST8_TOKEN_NAME "SSSD Test Token Expired"
+#define TEST8_PROMPT "SSSD test cert 0008\nCN=SSSD test cert 0008 expired,OU=SSSD test,O=SSSD"
+#define TEST8_KEY_ID "123456"
+#define TEST8_LABEL "SSSD test cert 0008"
+
+#define TEST9_TOKEN_NAME "SSSD Test Token Revoked"
+#define TEST9_PROMPT "SSSD test cert 0009\nCN=SSSD test cert 0009 - revoked,OU=SSSD test,O=SSSD"
+#define TEST9_KEY_ID "123456"
+#define TEST9_LABEL "SSSD test cert 0009"
 
 #define SSSD_TEST_PASSKEY \
      "passkey:zO7lzqHPkVgsWkMTuJ17E+9OTcPtYUZJFHDs3xPSDgjcsHp/yLHkiRRNJ2IMU278" \
@@ -1333,6 +1351,38 @@ static int test_pam_cert5_check(uint32_t status, uint8_t *body, size_t blen)
                                             SSS_PAM_CERT_INFO,
                                           "pamuser@"TEST_DOM_NAME, "pamuser",
                                           check5_strings);
+}
+
+static int test_pam_cert8_check(uint32_t status, uint8_t *body, size_t blen)
+{
+    char const *check5_strings[] = { NULL,
+                                     TEST8_TOKEN_NAME,
+                                     TEST_MODULE_NAME,
+                                     TEST8_KEY_ID,
+                                     TEST8_LABEL,
+                                     TEST8_PROMPT,
+                                     NULL,
+                                     NULL };
+    return test_pam_cert_X_token_X_check_ex(status, body, blen,
+                                            SSS_PAM_CERT_INFO,
+                                            "pamuser@"TEST_DOM_NAME, "pamuser",
+                                            check5_strings);
+}
+
+static int test_pam_cert9_check(uint32_t status, uint8_t *body, size_t blen)
+{
+    char const *check5_strings[] = { NULL,
+                                     TEST9_TOKEN_NAME,
+                                     TEST_MODULE_NAME,
+                                     TEST9_KEY_ID,
+                                     TEST9_LABEL,
+                                     TEST9_PROMPT,
+                                     NULL,
+                                     NULL };
+    return test_pam_cert_X_token_X_check_ex(status, body, blen,
+                                            SSS_PAM_CERT_INFO,
+                                            "pamuser@"TEST_DOM_NAME, "pamuser",
+                                            check5_strings);
 }
 
 static int test_pam_cert_check_auth_success(uint32_t status, uint8_t *body,
@@ -3616,6 +3666,200 @@ void test_pam_preauth_last_crl_another_ca_files(void **state)
                 test_pam_cert_check);
 }
 
+/* Expired certificates should always be rejected
+ * (test_pam_preauth_cert_expired), only if 'no_verification'
+ * is set expired certificates will be allowed
+ * (test_pam_preauth_cert_expired_no_verification).
+ *
+ * The 'soft_crl' option is explicitly tested with expired certificates
+ * because it involves a step where all expiration times are ignored. To make
+ * sure that expired certificates are still rejected in this case this is
+ * tested explicitly (test_pam_preauth_cert_expired_soft_crl). */
+
+void test_pam_preauth_cert_expired(void **state)
+{
+    int ret;
+
+    putenv(discard_const("SOFTHSM2_CONF=" ABS_BUILD_DIR "/src/tests/test_CA/softhsm2_expired.conf"));
+
+    set_cert_auth_param(pam_test_ctx->pctx, CA_DB);
+
+    mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
+                        NULL, NULL, SSSD_TEST_CERT_0008);
+
+    will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
+    will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
+
+    set_cmd_cb(test_pam_simple_check);
+    ret = sss_cmd_execute(pam_test_ctx->cctx, SSS_PAM_PREAUTH,
+                          pam_test_ctx->pam_cmds);
+    assert_int_equal(ret, EOK);
+
+    /* Wait until the test finishes with EOK */
+    ret = test_ev_loop(pam_test_ctx->tctx);
+    assert_int_equal(ret, EOK);
+}
+
+void test_pam_preauth_cert_expired_soft_crl(void **state)
+{
+    int ret;
+
+    struct sss_test_conf_param monitor_params[] = {
+        { "certificate_verification", "soft_crl,crl_file=" ABS_BUILD_DIR "/src/tests/test_CA/SSSD_test_CA_expired_crl.pem" },
+        { NULL, NULL }, /* Sentinel */
+    };
+
+    putenv(discard_const("SOFTHSM2_CONF=" ABS_BUILD_DIR "/src/tests/test_CA/softhsm2_expired.conf"));
+
+    ret = add_monitor_params(monitor_params, pam_test_ctx->rctx->cdb);
+    assert_int_equal(ret, EOK);
+
+    set_cert_auth_param(pam_test_ctx->pctx, CA_DB);
+
+    mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
+                        NULL, NULL, SSSD_TEST_CERT_0008);
+
+    will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
+    will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
+
+    set_cmd_cb(test_pam_simple_check);
+    ret = sss_cmd_execute(pam_test_ctx->cctx, SSS_PAM_PREAUTH,
+                          pam_test_ctx->pam_cmds);
+    assert_int_equal(ret, EOK);
+
+    /* Wait until the test finishes with EOK */
+    ret = test_ev_loop(pam_test_ctx->tctx);
+    assert_int_equal(ret, EOK);
+}
+
+void test_pam_preauth_cert_expired_no_verification(void **state)
+{
+    int ret;
+
+    struct sss_test_conf_param monitor_params[] = {
+        { "certificate_verification", "no_verification" },
+        { NULL, NULL }, /* Sentinel */
+    };
+
+    putenv(discard_const("SOFTHSM2_CONF=" ABS_BUILD_DIR "/src/tests/test_CA/softhsm2_expired.conf"));
+
+    ret = add_monitor_params(monitor_params, pam_test_ctx->rctx->cdb);
+    assert_int_equal(ret, EOK);
+
+    set_cert_auth_param(pam_test_ctx->pctx, CA_DB);
+
+    mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
+                        NULL, test_lookup_by_cert_cb, SSSD_TEST_CERT_0008);
+
+    will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
+    will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
+
+    set_cmd_cb(test_pam_cert8_check);
+    ret = sss_cmd_execute(pam_test_ctx->cctx, SSS_PAM_PREAUTH,
+                          pam_test_ctx->pam_cmds);
+    assert_int_equal(ret, EOK);
+
+    /* Wait until the test finishes with EOK */
+    ret = test_ev_loop(pam_test_ctx->tctx);
+    assert_int_equal(ret, EOK);
+}
+
+/* Revoked certificates should be rejected if a CRL listing those certificates
+ * as revoked is used (test_pam_preauth_cert_revoked_crl). Even if the CRL is
+ * expired and the 'soft_crl' option is used a certificate should be rejected
+ * if it is listed in the expired CRL
+ * (test_pam_preauth_cert_revoked_soft_crl). Only is no CRL is used the
+ * revoked certificate should be allowed as long as it is valid otherwise
+ * (test_pam_preauth_cert_revoked).
+ * OCSP is not covered by this unit tests. */
+
+void test_pam_preauth_cert_revoked(void **state)
+{
+    int ret;
+
+    putenv(discard_const("SOFTHSM2_CONF=" ABS_BUILD_DIR "/src/tests/test_CA/softhsm2_revoked.conf"));
+
+    set_cert_auth_param(pam_test_ctx->pctx, CA_DB);
+
+    mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
+                        NULL, test_lookup_by_cert_cb, SSSD_TEST_CERT_0009);
+
+    will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
+    will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
+
+    set_cmd_cb(test_pam_cert9_check);
+    ret = sss_cmd_execute(pam_test_ctx->cctx, SSS_PAM_PREAUTH,
+                          pam_test_ctx->pam_cmds);
+    assert_int_equal(ret, EOK);
+
+    /* Wait until the test finishes with EOK */
+    ret = test_ev_loop(pam_test_ctx->tctx);
+    assert_int_equal(ret, EOK);
+}
+
+void test_pam_preauth_cert_revoked_crl(void **state)
+{
+    int ret;
+
+    struct sss_test_conf_param monitor_params[] = {
+        { "certificate_verification", "crl_file=" ABS_BUILD_DIR "/src/tests/test_CA/SSSD_test_CA_crl.pem" },
+        { NULL, NULL }, /* Sentinel */
+    };
+
+    putenv(discard_const("SOFTHSM2_CONF=" ABS_BUILD_DIR "/src/tests/test_CA/softhsm2_revoked.conf"));
+
+    ret = add_monitor_params(monitor_params, pam_test_ctx->rctx->cdb);
+    assert_int_equal(ret, EOK);
+
+    set_cert_auth_param(pam_test_ctx->pctx, CA_DB);
+
+    mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
+                        NULL, NULL, SSSD_TEST_CERT_0009);
+
+    will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
+    will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
+
+    set_cmd_cb(test_pam_simple_check);
+    ret = sss_cmd_execute(pam_test_ctx->cctx, SSS_PAM_PREAUTH,
+                          pam_test_ctx->pam_cmds);
+    assert_int_equal(ret, EOK);
+
+    /* Wait until the test finishes with EOK */
+    ret = test_ev_loop(pam_test_ctx->tctx);
+    assert_int_equal(ret, EOK);
+}
+
+void test_pam_preauth_cert_revoked_soft_crl(void **state)
+{
+    int ret;
+
+    struct sss_test_conf_param monitor_params[] = {
+        { "certificate_verification", "soft_crl,crl_file=" ABS_BUILD_DIR "/src/tests/test_CA/SSSD_test_CA_expired_crl.pem" },
+        { NULL, NULL }, /* Sentinel */
+    };
+
+    putenv(discard_const("SOFTHSM2_CONF=" ABS_BUILD_DIR "/src/tests/test_CA/softhsm2_revoked.conf"));
+
+    ret = add_monitor_params(monitor_params, pam_test_ctx->rctx->cdb);
+    assert_int_equal(ret, EOK);
+
+    set_cert_auth_param(pam_test_ctx->pctx, CA_DB);
+
+    mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
+                        NULL, NULL, SSSD_TEST_CERT_0009);
+
+    will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
+    will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
+
+    set_cmd_cb(test_pam_simple_check);
+    ret = sss_cmd_execute(pam_test_ctx->cctx, SSS_PAM_PREAUTH,
+                          pam_test_ctx->pam_cmds);
+    assert_int_equal(ret, EOK);
+
+    /* Wait until the test finishes with EOK */
+    ret = test_ev_loop(pam_test_ctx->tctx);
+    assert_int_equal(ret, EOK);
+}
 
 void test_filter_response(void **state)
 {
@@ -4433,16 +4677,8 @@ void test_pam_passkey_preauth_found(void **state)
     struct sysdb_attrs *attrs;
     const char *passkey = SSSD_TEST_PASSKEY;
     size_t pk_size;
-    const char *user_verification = "on";
 
     set_passkey_auth_param(pam_test_ctx->pctx);
-
-    /* Add user verification attribute */
-    ret = sysdb_domain_update_passkey_user_verification(
-                        pam_test_ctx->tctx->dom->sysdb,
-                        pam_test_ctx->tctx->dom->name,
-                        user_verification);
-    assert_int_equal(ret, EOK);
 
     mock_input_pam_passkey(pam_test_ctx, "pamuser", "1234", NULL,
                                          NULL, SSSD_TEST_PASSKEY);
@@ -4484,16 +4720,8 @@ void test_pam_passkey_auth(void **state)
     struct sysdb_attrs *attrs;
     const char *passkey = SSSD_TEST_PASSKEY;
     size_t pk_size;
-    const char *user_verification = "on";
 
     set_passkey_auth_param(pam_test_ctx->pctx);
-
-    /* Add user verification attribute  */
-    ret = sysdb_domain_update_passkey_user_verification(
-                        pam_test_ctx->tctx->dom->sysdb,
-                        pam_test_ctx->tctx->dom->name,
-                        user_verification);
-    assert_int_equal(ret, EOK);
 
     mock_input_pam_passkey(pam_test_ctx, "pamuser", "1234", NULL,
                                          NULL, SSSD_TEST_PASSKEY);
@@ -4532,16 +4760,8 @@ void test_pam_passkey_pubkey_mapping(void **state)
     struct sysdb_attrs *attrs;
     const char *pubkey = SSSD_TEST_PUBKEY;
     size_t pk_size;
-    const char *user_verification = "on";
 
     set_passkey_auth_param(pam_test_ctx->pctx);
-
-    /* Add user verification attribute  */
-    ret = sysdb_domain_update_passkey_user_verification(
-                        pam_test_ctx->tctx->dom->sysdb,
-                        pam_test_ctx->tctx->dom->name,
-                        user_verification);
-    assert_int_equal(ret, EOK);
 
     mock_input_pam_passkey(pam_test_ctx, "pamuser", "1234", NULL,
                                          NULL, SSSD_TEST_PASSKEY);
@@ -4578,7 +4798,6 @@ void test_pam_passkey_pubkey_mapping(void **state)
 void test_pam_passkey_preauth_mapping_multi(void **state)
 {
     int ret;
-    const char *user_verification = "on";
     struct sysdb_attrs *attrs;
     const char *passkey = SSSD_TEST_PASSKEY;
     const char *pubkey = SSSD_TEST_PUBKEY;
@@ -4586,13 +4805,6 @@ void test_pam_passkey_preauth_mapping_multi(void **state)
     size_t pubkey_size;
 
     set_passkey_auth_param(pam_test_ctx->pctx);
-
-    /* Add user verification attribute  */
-    ret = sysdb_domain_update_passkey_user_verification(
-                        pam_test_ctx->tctx->dom->sysdb,
-                        pam_test_ctx->tctx->dom->name,
-                        user_verification);
-    assert_int_equal(ret, EOK);
 
     mock_input_pam_passkey(pam_test_ctx, "pamuser", "1234",
                                          NULL, NULL, SSSD_TEST_PASSKEY);
@@ -4888,6 +5100,12 @@ int main(int argc, const char *argv[])
                                         pam_test_setup, pam_test_teardown),
         cmocka_unit_test_setup_teardown(test_pam_preauth_crl_invalid_crl_another_ca_files,
                                         pam_test_setup, pam_test_teardown),
+        cmocka_unit_test_setup_teardown(test_pam_preauth_cert_expired,
+                                        pam_test_setup, pam_test_teardown),
+        cmocka_unit_test_setup_teardown(test_pam_preauth_cert_expired_soft_crl,
+                                        pam_test_setup, pam_test_teardown),
+        cmocka_unit_test_setup_teardown(test_pam_preauth_cert_expired_no_verification,
+                                        pam_test_setup, pam_test_teardown),
 #endif /* HAVE_FAKETIME */
         cmocka_unit_test_setup_teardown(test_pam_preauth_ocsp,
                                         pam_test_setup, pam_test_teardown),
@@ -4898,6 +5116,12 @@ int main(int argc, const char *argv[])
         cmocka_unit_test_setup_teardown(test_pam_preauth_first_crl_another_ca_files,
                                         pam_test_setup, pam_test_teardown),
         cmocka_unit_test_setup_teardown(test_pam_preauth_last_crl_another_ca_files,
+                                        pam_test_setup, pam_test_teardown),
+        cmocka_unit_test_setup_teardown(test_pam_preauth_cert_revoked,
+                                        pam_test_setup, pam_test_teardown),
+        cmocka_unit_test_setup_teardown(test_pam_preauth_cert_revoked_crl,
+                                        pam_test_setup, pam_test_teardown),
+        cmocka_unit_test_setup_teardown(test_pam_preauth_cert_revoked_soft_crl,
                                         pam_test_setup, pam_test_teardown),
 #endif /* HAVE_TEST_CA */
 
